@@ -513,7 +513,9 @@ class Backup extends \DB_Helper implements \BMO {
 		$remotePath =  sprintf('/%s/%s',$serverName,$underscoreName);
 		$tmpdir = sprintf('%s/backup/%s',sys_get_temp_dir(),$underscoreName);
 		$this->fs->mkdir($tmpdir);
-		$pharname = sprintf('%s/backup-%s.tar',$localPath,time());
+		//$pharname = sprintf('%s/backup-%s.tar',$localPath,time());
+		//Legacy backup naming
+		$pharname = sprintf('%s/%s%s-%s-%s.tar',$localPath,date("Ymd-His-"),time(),get_framework_version(),rand());
 		$phargzname = sprintf('%s.gz',$pharname);
 		$this->log($transactionId,sprintf(_("This backup will be stored locally at %s and is subject to maintinance settings"),$pharname));
 		$phar = new \PharData($pharname);
