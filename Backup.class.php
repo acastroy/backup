@@ -4,8 +4,12 @@
  */
 namespace FreePBX\modules;
 use FreePBX\modules\Backup\Handlers as Handler;
+use Symfony\Component\Process\Process;
+use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Filesystem\Filesystem;
-$setting = array('authenticate' => true, 'allowremote' => false);
+use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
+use Symfony\Component\Filesystem\LockHandler;
+
 class Backup extends \DB_Helper implements \BMO {
 	public function __construct($freepbx = null) {
 		if ($freepbx == null) {
@@ -109,8 +113,13 @@ class Backup extends \DB_Helper implements \BMO {
 	 * @param [type] $setting [description]
 	 */
 	public function ajaxRequest($req, &$setting) {
+		$setting['authenticate'] = false;
+		$setting['allowremote'] = true;
 		switch ($req) {
 			case 'getJSON':
+			case 'run':
+			case 'runstatus':
+			case 'getlog':
 				return true;
 			break;
 			default:
@@ -124,6 +133,42 @@ class Backup extends \DB_Helper implements \BMO {
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
+			case 'run':
+				if(!isset($_GET['id'])){
+					return ['status' => false, 'message' => _("No backup id provided")];
+				}
+				$buid = escapeshellarg($_GET['id']);
+				$jobid = $this->generateId();
+				$process = new Process('fwconsole backup --backup='.$buid.' --transaction='.$jobid);
+				//$process->disableOutput();
+				try {
+					$process->mustRun();
+				} catch (\Exception $e) {
+					dbug($process->getOutput());
+					dbug($process->getErrorOutput());
+					return ['status' => false, 'message' => _("Couldn't run process.")];
+				}
+
+				$pid = $process->getPid();
+				return ['status' => true, 'message' => _("Backup running"), 'process' => $pid, 'transaction' => $jobid, 'backupid' => $buid];
+			case 'runstatus':
+				if(!isset($_GET['id']) || !isset($_GET['transaction'])){
+					return ['status' => 'stopped', 'error' => _("Missing id or transaction")];
+				}
+				$job = $_GET['transaction'];
+				$buid = $_GET['id'];
+				$lockHandler = new LockHandler($job.'.'.$buid);
+				if (!$lockHandler->lock()) {
+					$lockHandler->release();
+					return ['status' => 'running'];
+				}
+				return ['status' => 'stopped'];
+			case 'getLog':
+				if(!isset($_GET['transaction'])){
+					return[];
+				}
+				$ret = $this->getAll($_GET['transaction']);
+				return $ret?$ret:[];
 			case 'getJSON':
 				switch ($_REQUEST['jdata']) {
 					case 'backupGrid':
@@ -195,6 +240,9 @@ class Backup extends \DB_Helper implements \BMO {
 	public function showPage($page){
 		switch ($page) {
 			case 'backup':
+				if(isset($_GET['view']) && $_GET['view'] == 'test'){
+					return show_view(__DIR__.'/views/runview.php');
+				}
 				if(isset($_GET['view']) && $_GET['view'] == 'form'){
 					$vars = ['id' => ''];
 					if(isset($_GET['id']) && !empty($_GET['id'])){
@@ -646,10 +694,13 @@ class Backup extends \DB_Helper implements \BMO {
 		if(!empty($errors)){
 			$this->log($transactionId,_("Backup finished with but with errors"));
 			$this->processNotifications($id, $transactionId, $errors);
+			$this->setConfig('errors',$errors,$transactionId);
+			$this->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
 			return $errors;
 		}
 		$this->log($transactionId,_("Backup completed successfully"));
 		$this->processNotifications($id, $transactionId, []);
+		$this->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
 		return $signatures;
 	}
 
@@ -888,40 +939,5 @@ class Backup extends \DB_Helper implements \BMO {
 		$email->setTo($backupInfo['backup_email']);
 		$email->setBody(implode(PHP_EOL, $emailbody));
 		return $email->send();
-	}
-
-	//TEMPLATE STUFF. THIS MAY ALL GO AWAY
-
-	//TODO: Do we need templates any more?
-	public function listTemplates(){
-		return $this->getConfig('templateList');
-	}
-
-	public function getTemplate($id){
-		$data = $this->getAll($id);
-		$return = [];
-		foreach ($this->templateFields as $key => $value) {
-			switch ($key) {
-				default:
-					$return[$key] = isset($data[$key])?$data[$key]:'';
-				break;
-			}
-		}
-		return $return;
-	}
-
-	public function updateTemplate($data){
-		$data['id'] = (isset($data['id']) && !empty($data[id]))?$data['id']:$this->generateID();
-		foreach ($this->templateFields as $col) {
-			$value = isset($data[$col])?$data[$col]:'';
-			$this->setConfig($col,$value,$data['id']);
-		}
-		$description = isset($data['template_description'])?$data['template_description']:sprintf('Template %s',$data['template_name']);
-		$this->setConfig($data['id'],array('id' => $data['id'], 'name' => $data['template_name'], 'description' => $description),'templateList');
-	}
-
-	public function deleteTemplate($id){
-		$this->setConfig($id,false,'templateList');
-		$this->delById($id);
 	}
 }
