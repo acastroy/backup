@@ -18,7 +18,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->FreePBX = $freepbx;
 		$this->db = $freepbx->Database;
 		$this->fs = new Filesystem;
-		$this->backupFields = ['backup_name','backup_description','backup_items','backup_storage','backup_schedule','maintage','maintruns','backup_email','backup_emailtype','immortal'];
+		$this->backupFields = ['backup_name','backup_description','backup_items','backup_storage','backup_schedule','schedule_enabled','maintage','maintruns','backup_email','backup_emailtype','immortal'];
 		$this->templateFields = [];
 		$this->serverName = $this->FreePBX->Config->get('FREEPBX_SYSTEM_IDENT');
 		$this->sessionlog = [];
@@ -240,13 +240,13 @@ class Backup extends \DB_Helper implements \BMO {
 	public function showPage($page){
 		switch ($page) {
 			case 'backup':
-				if(isset($_GET['view']) && $_GET['view'] == 'test'){
-					return show_view(__DIR__.'/views/runview.php');
-				}
 				if(isset($_GET['view']) && $_GET['view'] == 'form'){
+					$randcron = sprintf('59 23 * * %s',rand(0,6));
 					$vars = ['id' => ''];
+					$vars['backup_schedule'] = $randcron;
 					if(isset($_GET['id']) && !empty($_GET['id'])){
 						$vars = $this->getBackup($_GET['id']);
+						$vars['backup_schedule'] = !empty($vars['backup_schedule'])?$vars['backup_schedule']:$randcron;
 						$vars['id'] = $_GET['id'];
 					}
 					return show_view(__DIR__.'/views/backup/form.php',$vars);
@@ -472,7 +472,37 @@ class Backup extends \DB_Helper implements \BMO {
 
 
 	//Setters
-
+	public function scheduleJobs($id = 'all'){
+		if($id !== 'all'){
+			$enabled = $this->getBackupSetting($id, 'schedule_enabled');
+			if($enabled === 'yes'){
+				$schedule = $this->getBackupSetting($id, 'backup_schedule');
+				$command = sprintf('/usr/sbin/fwconsole backup backup=%s > /dev/null 2>&1',$id);
+				$this->FreePBX->Cron->removeAll($command);
+				$this->FreePBX->Cron->add($schedule.' '.$command);
+				return true;
+			}
+		}
+		//Clean slate
+		$allcrons = $this->FreePBX->Cron->getAll();
+		$allcrons = is_array($allcrons)?$allcrons:[];
+		foreach ($allcrons as $string => $cmd) {
+			if (strpos($cmd, 'fwconsole backup') !== false) {
+				$this->FreePBX->Cron->remove($cmd);
+			}
+		}
+		$backups = $this->listBackups();
+		foreach ($backups as $key => $value) {
+			$enabled = $this->getBackupSetting($key, 'schedule_enabled');
+			if($enabled === 'yes'){
+				$schedule = $this->getBackupSetting($key, 'backup_schedule');
+				$command = sprintf('/usr/sbin/fwconsole backup backup=%s > /dev/null 2>&1',$key);
+				$this->FreePBX->Cron->removeAll($command);
+				$this->FreePBX->Cron->add($schedule.' '.$command);
+			}
+		}
+		return true;
+	}
 	/**
 	 * Update/Add a backup item. Note the only difference is weather we generate an ID
 	 * @param  array $data an array of the items needed. typically just send the $_POST array
@@ -498,14 +528,18 @@ class Backup extends \DB_Helper implements \BMO {
 		if(isset($data['backup_items_settings']) && $data['backup_items_settings'] !== 'unchanged' ){
 			$this->processBackupSettings($data['id'], json_decode($data['backup_items_settings'],true));
 		}
+		$this->scheduleJobs($id);
 		return $id;
 	}
 
 	public function updateBackupSetting($id, $setting, $value=false){
-		$this->setConfig($setting,$value,$id);
+		$ret = $this->setConfig($setting,$value,$id);
+		if($setting == 'backup_schedule'){
+			$this->scheduleJobs($id);
+		}
 	}
 	public function getBackupSetting($id,$setting){
-		$this->getConfig($setting, $id);
+		return $this->getConfig($setting, $id);
 	}
 	/**
 	 * delete backup by ID
@@ -516,6 +550,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->setConfig($id,false,'backupList');
 		$this->delById($id);
 		//This should return an empty array if successful.
+		$this->scheduleJobs('all');
 		return empty($this->getBackup($id));
 	}
 
@@ -781,7 +816,7 @@ class Backup extends \DB_Helper implements \BMO {
 	 * @return mixed              true or array of errors
 	 */
 	public function doMaintinance($backupId,$transactionId){
-		return;
+
 		$backupInfo = $this->getBackup($backupId);
 		$underscoreName = str_replace(' ', '_', $backupInfo['backup_name']);
 		$spooldir = $this->FreePBX->Config->get("ASTSPOOLDIR");
