@@ -246,8 +246,9 @@
 				</div>
 			</div>
 		</div>
-		<!--END Delete After Days-->
 	</div>
+		<!--END Delete After Days-->
+		<?php echo $warmspare ?>
 </form>
 
 <div class="modal fade" tabindex="-1" id="itemsModal" role="dialog">

@@ -120,6 +120,7 @@ class Backup extends \DB_Helper implements \BMO {
 			case 'run':
 			case 'runstatus':
 			case 'getlog':
+			case 'restoreFiles':
 				return true;
 			break;
 			default:
@@ -133,6 +134,8 @@ class Backup extends \DB_Helper implements \BMO {
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
+			case 'restoreFiles':
+				return [];
 			case 'run':
 				if(!isset($_GET['id'])){
 					return ['status' => false, 'message' => _("No backup id provided")];
@@ -249,16 +252,19 @@ class Backup extends \DB_Helper implements \BMO {
 						$vars['backup_schedule'] = !empty($vars['backup_schedule'])?$vars['backup_schedule']:$randcron;
 						$vars['id'] = $_GET['id'];
 					}
+					$vars['warmspare'] = '';
+					if($this->getConfig('warmspare')){
+						$vars['warmspare'] = load_view(__DIR__.'/views/backup/warmspare.php',$vars);
+					}
 					return show_view(__DIR__.'/views/backup/form.php',$vars);
 				}
 				if(isset($_GET['view']) && $_GET['view'] == 'download'){
 					return show_view(__DIR__.'/views/backup/download.php');
 				}
 				return show_view(__DIR__.'/views/backup/grid.php');
-
 			break;
 			case 'restore':
-			case 'templates':
+				return show_view(__DIR__.'/views/restore/landing.php');
 				return '<h1>PLACEHOLDER</h1>';
 			break;
 		}
