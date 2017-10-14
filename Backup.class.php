@@ -33,6 +33,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->migrateBackupJobs();
 		//If anyone is listening they can attempt a data migration.
 		$this->FreePBX->Hooks->processHooks($this);
+		$this->setConfig('warmspare' = true);
 	}
 
 	public function uninstall(){
