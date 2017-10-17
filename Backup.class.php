@@ -10,6 +10,7 @@ use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 use Symfony\Component\Filesystem\LockHandler;
 
+
 class Backup extends \DB_Helper implements \BMO {
 	public function __construct($freepbx = null) {
 		if ($freepbx == null) {
@@ -33,7 +34,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->migrateBackupJobs();
 		//If anyone is listening they can attempt a data migration.
 		$this->FreePBX->Hooks->processHooks($this);
-		$this->setConfig('warmspare' = true);
+		$this->setConfig('warmspare', true);
 	}
 
 	public function uninstall(){
@@ -114,14 +115,13 @@ class Backup extends \DB_Helper implements \BMO {
 	 * @param [type] $setting [description]
 	 */
 	public function ajaxRequest($req, &$setting) {
-		$setting['authenticate'] = false;
-		$setting['allowremote'] = true;
 		switch ($req) {
 			case 'getJSON':
 			case 'run':
 			case 'runstatus':
 			case 'getlog':
 			case 'restoreFiles':
+			case 'uploadrestore':
 				return true;
 			break;
 			default:
@@ -135,6 +135,30 @@ class Backup extends \DB_Helper implements \BMO {
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
+			case 'uploadrestore':
+			$id = $this->generateId();
+			if(!isset($_FILES['filetorestore'])){
+				return ['status' => false, 'error' => _("No file provided")];
+			}
+			if($_FILES['filetorestore']['error'] !== 0){
+				return ['status' => false, 'err' => $_FILES['filetorestore']['error'], 'message' => _("File reached the server but could not be processed")];
+			}
+			if($_FILES['filetorestore']['type'] != 'application/x-gzip'){
+				return ['status' => false, 'mime' => $_FILES['filetorestore']['type'], 'message' => _("The uploaded file type is incorrect and couldn't be processed")];
+			}
+			$spooldir = $this->FreePBX->Config->get("ASTSPOOLDIR");
+			$path = sprintf('%s/backup/uploads/',$spooldir);
+			//This will ignore if exists
+			$this->fs->mkdir($path);
+			$file = $path.basename($_FILES['filetorestore']['name']);
+			if (!move_uploaded_file($_FILES['filetorestore']['tmp_name'],$file)){
+				return ['status' => false, 'message' => _("Failed to copy the uploaded file")];
+			}
+			$this->setConfig('file', $file, $id);
+			$backupphar = new \PharData($file);
+			$meta = $backupphar->getMetadata();
+			$this->setConfig('meta', $meta, $id);
+			return ['status' => true, 'id' => $id, 'meta' => $meta];
 			case 'restoreFiles':
 				return [];
 			case 'run':
@@ -257,16 +281,40 @@ class Backup extends \DB_Helper implements \BMO {
 					if($this->getConfig('warmspare')){
 						$vars['warmspare'] = load_view(__DIR__.'/views/backup/warmspare.php',$vars);
 					}
-					return show_view(__DIR__.'/views/backup/form.php',$vars);
+					return load_view(__DIR__.'/views/backup/form.php',$vars);
 				}
 				if(isset($_GET['view']) && $_GET['view'] == 'download'){
-					return show_view(__DIR__.'/views/backup/download.php');
+					return load_view(__DIR__.'/views/backup/download.php');
 				}
-				return show_view(__DIR__.'/views/backup/grid.php');
+				return load_view(__DIR__.'/views/backup/grid.php');
 			break;
 			case 'restore':
-				return show_view(__DIR__.'/views/restore/landing.php');
-				return '<h1>PLACEHOLDER</h1>';
+				$view = isset($_GET['view'])?$_GET['view']:'default';
+				switch ($view) {
+					case 'processrestore':
+						if(!isset($_GET['id']) || empty($_GET['id'])){
+							return load_view(__DIR__.'/views/restore/landing.php',['error' => _("No id was specified to process. Please try submitting your file again.")]);
+						}
+						$backupjson = [];
+						$vars = $this->getAll($_GET['id']);
+						$vars['missing'] = "yes";
+						$vars['reset'] = "no";
+						$vars['enabletrunks'] = "yes";
+						foreach ($vars['meta']['modules'] as $module) {
+							$mod = strtolower($module);
+							$status = $this->FreePBX->Modules->checkStatus($mod);
+							$backupjson[] = [
+								'modulename' => $module,
+								'installed' => $status
+							];
+						}
+						$vars['jsondata'] = json_encode($backupjson);
+						return load_view(__DIR__.'/views/restore/processRestore.php',$vars);
+					break;
+					default:
+						return load_view(__DIR__.'/views/restore/landing.php');
+					break;
+				}
 			break;
 		}
 	}

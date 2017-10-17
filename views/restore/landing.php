@@ -1,3 +1,8 @@
+<?php
+if(isset($error) && !empty($error)){
+	echo '<div class = "alert alert-danger">'.$error.'</div>';
+}
+?>
 <div class="panel panel-primary">
 	<div class="panel-heading">
 		<h3 class="panel-title"><?php echo _("Upload your restore file")?></h3>
@@ -13,9 +18,9 @@
 					</div>
 					<div class="col-md-9">
 						<span class="btn btn-default btn-file">
-							<?php echo _("Browse")?>&nbsp;&nbsp;<input type="file" class="form-control" id="filetorestore" name="filetorestore" value="" >
+							<?php echo _("Browse")?>&nbsp;&nbsp;<input type="file" class="form-control" id="filetorestore" name="filetorestore" value="">
 						</span>
-						<span class="filename"></span>
+						<span class="filename"><?php echo _("No File Selected")?></span><a href="javascript:void(0);" class="btn btn-default pull-right" id="backupUpload"><?php echo _("Upload")?></a>
 					</div>
 				</div>
 			</div>
