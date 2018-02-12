@@ -122,12 +122,13 @@ class Backup extends \DB_Helper implements \BMO {
 			case 'getlog':
 			case 'restoreFiles':
 			case 'uploadrestore':
-				return true;
+				$return = true;
 			break;
 			default:
-				return false;
+				$return = false;
 			break;
 		}
+		return $return;
 	}
 
 	/**
@@ -168,7 +169,7 @@ class Backup extends \DB_Helper implements \BMO {
 				$buid = escapeshellarg($_GET['id']);
 				$jobid = $this->generateId();
 				$process = new Process('fwconsole backup --backup='.$buid.' --transaction='.$jobid);
-				//$process->disableOutput();
+				$process->disableOutput();
 				try {
 					$process->mustRun();
 				} catch (\Exception $e) {
@@ -257,6 +258,8 @@ class Backup extends \DB_Helper implements \BMO {
 				case 'backup_restore':
 					return "Placeholder";
 				break;
+				default:
+				break;
 			}
 		}
 	}
@@ -313,6 +316,8 @@ class Backup extends \DB_Helper implements \BMO {
 					break;
 				}
 			break;
+			default:
+				return load_view(__DIR__.'/views/backup/grid.php');
 		}
 	}
 
@@ -322,7 +327,7 @@ class Backup extends \DB_Helper implements \BMO {
 			return false;
 		}
 		$ret = '<div class="hooksetting">';
-		foreach ($hooks as $key => $value) {
+		foreach ($hooks as $value) {
 			$ret .= $value;
 		}
 		$ret .= '</div>';
@@ -466,11 +471,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$data = $this->getAll($id);
 		$return = [];
 		foreach ($this->backupFields as $key) {
-			switch ($key) {
-				default:
-					$return[$key] = isset($data[$key])?$data[$key]:'';
-				break;
-			}
+			$return[$key] = isset($data[$key])?$data[$key]:'';
 		}
 		return $return;
 	}
@@ -538,7 +539,7 @@ class Backup extends \DB_Helper implements \BMO {
 		//Clean slate
 		$allcrons = $this->FreePBX->Cron->getAll();
 		$allcrons = is_array($allcrons)?$allcrons:[];
-		foreach ($allcrons as $string => $cmd) {
+		foreach ($allcrons as $cmd) {
 			if (strpos($cmd, 'fwconsole backup') !== false) {
 				$this->FreePBX->Cron->remove($cmd);
 			}
@@ -585,7 +586,7 @@ class Backup extends \DB_Helper implements \BMO {
 	}
 
 	public function updateBackupSetting($id, $setting, $value=false){
-		$ret = $this->setConfig($setting,$value,$id);
+		$this->setConfig($setting,$value,$id);
 		if($setting == 'backup_schedule'){
 			$this->scheduleJobs($id);
 		}
@@ -630,12 +631,14 @@ class Backup extends \DB_Helper implements \BMO {
 	 * @param  string $transactionId UUIDv4 string, if empty one will be generated
 	 * @return mixed               true or array of errors
 	 */
-	public function doBackup($id = '',$transactionId = '', $base64Backup = null) {
+	public function doBackup($id = '',$transactionId = '', $base64Backup = null, $pid = '') {
 		if(empty($id) && empty($base64Backup)){
 			throw new \Exception("Backup id not provided", 500);
 		}
+		$pid = !empty($pid)?$pid:posix_getpid();
 		$external = !empty($base64Backup);
 		$transactionId = !empty($transactionId)?$transactionId:$this->generateId();
+		$this->setConfig($transactionId,$pid,'running');
 		$this->log($transactionId,_("Running pre backup hooks"));
 		$this->preBackupHooks($id, $transactionId);
 		$base64Backup = !empty($base64Backup)?json_decode(base64_decode($base64Backup),true):false;
@@ -798,6 +801,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->log($transactionId,_("Backup completed successfully"));
 		$this->processNotifications($id, $transactionId, []);
 		$this->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
+		$this->delConfig($transactionId,'running');
 		return $signatures;
 	}
 

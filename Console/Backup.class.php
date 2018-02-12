@@ -52,7 +52,8 @@ class Backup extends Command {
 					$this->log($job, _("A backup job for this id is already running"));
     			return false;
 				}
-				$this->freepbx->Backup->doBackup($buid,$job);
+				$pid = posix_getpid();
+				$this->freepbx->Backup->doBackup($buid,$job,null,$pid);
 				$lockHandler->release();
 			break;
 			case $restore:
@@ -70,7 +71,8 @@ class Backup extends Command {
 			case $remote:
 				$job = $transaction?$transaction:$this->freepbx->Backup->generateID();
 				$output->writeln(sprintf('Starting backup job with ID: %s',$job));
-				$this->freepbx->Backup->doBackup('',$job,$input->getOption('externbackup'));
+				$pid = posix_getpid();
+				$this->freepbx->Backup->doBackup('',$job,$input->getOption('externbackup'),$pid);
 			break;
 			default:
 				$output->writeln($this->getHelp());
