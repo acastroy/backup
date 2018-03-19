@@ -17,10 +17,7 @@ if(isset($error) && !empty($error)){
 						<i class="fa fa-question-circle fpbx-help-icon" data-for="filetorestore"></i>
 					</div>
 					<div class="col-md-9">
-						<span class="btn btn-default btn-file">
-							<?php echo _("Browse")?>&nbsp;&nbsp;<input type="file" class="form-control" id="filetorestore" name="filetorestore" value="">
-						</span>
-						<span class="filename"><?php echo _("No File Selected")?></span><a href="javascript:void(0);" class="btn btn-default pull-right" id="backupUpload"><?php echo _("Upload")?></a>
+						<input type="file" data-max-files="1" id="filetorestore" name="filetorestore" value="">
 					</div>
 				</div>
 			</div>

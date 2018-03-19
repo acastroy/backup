@@ -19,6 +19,7 @@ class Backup extends Command {
 				new InputOption('dumpextern', 'd', InputOption::VALUE_REQUIRED, 'Dump Base64 backup data'),
 				new InputOption('transaction', 't', InputOption::VALUE_REQUIRED, 'Transaction ID for the backup'),
 				new InputOption('list', 'ls', InputOption::VALUE_NONE, 'List backups'),
+				new InputOption('implemented', '', InputOption::VALUE_NONE, ''),
 				new InputOption('restore', 're', InputOption::VALUE_REQUIRED, 'Restore File'),
 		))
 		->setHelp('Run a backup: fwconsole backup --id=[backup-id]'.PHP_EOL
@@ -39,13 +40,18 @@ class Backup extends Command {
 		$remote = $input->getOption('externbackup');
 		$dumpextern = $input->getOption('dumpextern');
 		$transaction = $input->getOption('transaction');
+		if($input->getOption('implemented')){
+			$output->writeln(json_encode($this->freepbx->Backup->getBackupModules()));
+			return;
+		}
+		$job = $transaction?$transaction:$this->freepbx->Backup->generateID();
+
 		switch (true) {
 			case $list:
 				$this->listBackups();
 			break;
 			case $backup:
 				$buid = $input->getOption('backup');
-				$job = $transaction?$transaction:$this->freepbx->Backup->generateID();
 				$output->writeln(sprintf('Starting backup job with ID: %s',$job));
 				$lockHandler = new LockHandler($job.'.'.$buid);
 				if (!$lockHandler->lock()) {
@@ -57,6 +63,15 @@ class Backup extends Command {
 				$lockHandler->release();
 			break;
 			case $restore:
+				$output->writeln(sprintf('Starting restore job with file: %s',$restore));
+				//We don't EVER want multiple restores running.
+				$lockHandler = new LockHandler('restore');
+				if (!$lockHandler->lock()) {
+					$this->log($job, _("A restore task is already running"));
+    				return false;
+				}
+				$this->freepbx->Backup->doRestore($restore,$job);
+				$lockHandler->release();
 			break;
 			case $dumpextern:
 				$backupdata = $this->freepbx->Backup->getBackup($input->getOption('dumpextern'));
