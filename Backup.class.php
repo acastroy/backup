@@ -4,6 +4,7 @@
  */
 namespace FreePBX\modules;
 use FreePBX\modules\Backup\Handlers as Handler;
+use FreePBX\modules\Filestore\Modules as Filestore;
 use Symfony\Component\Process\Process;
 use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Filesystem\Filesystem;
@@ -11,7 +12,7 @@ use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 use Symfony\Component\Filesystem\LockHandler;
 
 
-class Backup extends \DB_Helper implements \BMO {
+class Backup extends \FreePBX_Helpers implements \BMO {
 	public function __construct($freepbx = null) {
 		if ($freepbx == null) {
 				throw new Exception('Not given a FreePBX Object');
@@ -20,7 +21,7 @@ class Backup extends \DB_Helper implements \BMO {
 		$this->db = $freepbx->Database;
 		$this->mf = \module_functions::create();
 		$this->fs = new Filesystem;
-		$this->backupFields = ['backup_name','backup_description','backup_items','backup_storage','backup_schedule','schedule_enabled','maintage','maintruns','backup_email','backup_emailtype','immortal'];
+		$this->backupFields = ['backup_name','backup_description','backup_items','backup_storage','backup_schedule','schedule_enabled','maintage','maintruns','backup_email','backup_emailtype','immortal','warmspare_type','warmspare_user','warmspare_remote','warmspareenables','publickey'];
 		$this->templateFields = [];
 		$this->serverName = $this->FreePBX->Config->get('FREEPBX_SYSTEM_IDENT');
 		$this->sessionlog = [];
@@ -48,17 +49,14 @@ class Backup extends \DB_Helper implements \BMO {
 	}
 
 	public function doConfigPageInit($page) {
-		switch ($page) {
-			case 'backup':
-				if(isset($_REQUEST['action']) && $_REQUEST['action'] == 'delete'){
-					return $this->deleteBackup($_REQUEST['id']);
-				}
-				if(isset($_POST['backup_name'])){
-					return $this->updateBackup($_POST);
-				}
-			break;
-			default:
-			break;
+		if($page == 'backup'){
+			if(isset($_REQUEST['action']) && $_REQUEST['action'] == 'delete'){
+				return $this->deleteBackup($_REQUEST['id']);
+			}
+			if(isset($_POST['backup_name'])){
+				$this->importRequest();
+				return $this->updateBackup();
+			}
 		}
 	}
 
@@ -123,6 +121,7 @@ class Backup extends \DB_Helper implements \BMO {
 			case 'getlog':
 			case 'restoreFiles':
 			case 'uploadrestore':
+			case 'generateRSA':
 				$return = true;
 			break;
 			default:
@@ -137,6 +136,10 @@ class Backup extends \DB_Helper implements \BMO {
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
+			case 'generateRSA':
+				$ssh = new Filestore\Remote();
+				$ret = $ssh->generateKey('/home/asterisk/.ssh');
+			return ['status' => $ret];
 			case 'uploadrestore':
 			$id = $this->generateId();
 			if(!isset($_FILES['filetorestore'])){
@@ -269,6 +272,9 @@ class Backup extends \DB_Helper implements \BMO {
 	public function showPage($page){
 		switch ($page) {
 			case 'backup':
+				if(isset($_GET['view']) && $_GET['view'] == 'newRSA'){
+					return load_view(__DIR__.'/views/backup/rsa.php');
+				}
 				if(isset($_GET['view']) && $_GET['view'] == 'form'){
 					$randcron = sprintf('59 23 * * %s',rand(0,6));
 					$vars = ['id' => ''];
@@ -278,8 +284,29 @@ class Backup extends \DB_Helper implements \BMO {
 						$vars['backup_schedule'] = !empty($vars['backup_schedule'])?$vars['backup_schedule']:$randcron;
 						$vars['id'] = $_GET['id'];
 					}
+					$warmsparedisable = $this->getConfig('warmsparedisable');
 					$vars['warmspare'] = '';
-					if($this->getConfig('warmspare')){
+					if(empty($warmsparedisable)){
+						$warmsparedefaults = [
+							'warmspare_type' => 'primary',
+							'warmspare_user' => 'root',
+							'warmspare_remote' => 'no',
+							'warmspare_enable' => 'no',
+						];
+						$settings = $this->getConfig('warmsparesettings');
+						$settings = $settings?$settings:[];
+						foreach($warmsparedefaults as $key => $value){
+							$value = isset($settings[$key])?$settings[$key]:$value;
+							$vars[$key] = $value;
+						}
+						if($vars['warmspare_type'] == 'primary'){
+							$file = '/home/asterisk/.ssh/id_rsa.pub';
+							$vars['publickey'] = '';
+							if(file_exists($file)){
+								$data = file_get_contents($file);
+								$vars['publickey'] = $data;
+							}
+						}
 						$vars['warmspare'] = load_view(__DIR__.'/views/backup/warmspare.php',$vars);
 					}
 					return load_view(__DIR__.'/views/backup/form.php',$vars);
@@ -396,20 +423,6 @@ class Backup extends \DB_Helper implements \BMO {
 		if($this->getMigrationFlag('filestore')){
 			return true;
 		}
-		$stmt = $this->db->query('SELECT `server_id`,`key`,`value` FROM backup_server_details');
-		$servers = array();
-		while($item = $stmt->fetch(\PDO::FETCH_ASSOC)){
-		 $servers[$item['server_id']][$item['key']] = $item['value'];
-		}
-		$stmt = $this->db->query('SELECT * FROM backup_servers');
-		while($item = $stmt->fetch(\PDO::FETCH_ASSOC)){
-		 $servers[$item['id']]['name'] = $item['name'];
-		 $servers[$item['id']]['description'] = $item['desc'];
-		 $servers[$item['id']]['type'] = $item['type'];
-		 $servers[$item['id']]['immortal'] = !is_null($item['immortal']);
-		 $servers[$item['id']]['readonly'] = !is_null($item['readonly']);
-		}
-		$this->setMigration('filestore', $servers);
 	}
 	public function setMigration($rawname,$data){
 		$this->setConfig('data',$data,$rawname);
@@ -594,25 +607,34 @@ class Backup extends \DB_Helper implements \BMO {
 	 * @param  array $data an array of the items needed. typically just send the $_POST array
 	 * @return string the backup id
 	 */
-	public function updateBackup($data){
-		$data['id'] = (isset($data['id']) && !empty($data[id]))?$data['id']:$this->generateID();
+	public function updateBackup(){
+		$data = [];
+		$data['id'] = $this->getReq('id',$this->generateID());
+
 		foreach ($this->backupFields as $col) {
 			//This will be set independently
 			if($col == 'immortal'){
 				continue;
 			}
-			$value = isset($data[$col])?$data[$col]:'';
+			//If this system is the primary system we get the key from the system.
+			if($col == 'publickey'){
+				if($this->getReq('warmspare_type','primary') === "primary"){
+					continue;
+				}
+				$ssh = new Filestore\Remote();
+				$ssh->addTrustedKey($this->getReq('publickey'));
+			}
+			$value = $this->getReqUnsafe($col,'');
 			$this->updateBackupSetting($data['id'], $col, $value);
 		}
-		$description = isset($data['backup_description'])?$data['backup_description']:sprintf('Backup %s',$data['backup_name']);
-		$this->setConfig($data['id'],array('id' => $data['id'], 'name' => $data['backup_name'], 'description' => $description),'backupList');
-		if(isset($data['backup_items']) && $data['backup_items'] !== 'unchanged'){
-			$backup_items = json_decode($data['backup_items'],true);
-			$backup_items = is_array($backup_items)?$backup_items:[];
+		$description = $this->getReq('backup_description',sprintf(_('Backup %s'),$this->getReq('backup_name')));
+		$this->setConfig($data['id'],array('id' => $data['id'], 'name' => $this->getReq('backup_name',''), 'description' => $description),'backupList');
+		if($this->getReq('backup_items','unchanged') !== 'unchanged'){
+			$backup_items = json_decode($this->$getReq('backup_items',[]),true);
 			$this->setModulesById($data['id'], $backup_items);
 		}
 		if(isset($data['backup_items_settings']) && $data['backup_items_settings'] !== 'unchanged' ){
-			$this->processBackupSettings($data['id'], json_decode($data['backup_items_settings'],true));
+			$this->processBackupSettings($data['id'], json_decode($this->getReq('backup_items_settings'),true));
 		}
 		$this->scheduleJobs($id);
 		return $id;
@@ -742,16 +764,15 @@ class Backup extends \DB_Helper implements \BMO {
 			}
 
 			foreach ($moddata['files'] as $file) {
-				$srcpath = Handler\Backup::getPath($file);
+				$srcpath = isset($file['pathto'])?$file['pathto']:'';
 				if (empty($srcpath)) {
 					continue;
 				}
+				dbug($file);
+				$srcfile = $srcpath .'/'. $file['filename'];
 
-				$srcpath = backup__($srcpath);
-				$srcfile = $srcpath . '/' . $file['filename'];
-
-				$destpath = backup__('files/' . ltrim($file['path'],'/'));
-				$destfile = $destpath . '/' . $file['filename'];
+				$destpath = backup__('files/' . ltrim($file['pathto'],'/'));
+				$destfile = $destpath . $file['filename'];
 
 				$dirs[] = $destpath;
 				$files[$srcfile] = $destfile;
@@ -867,6 +888,9 @@ class Backup extends \DB_Helper implements \BMO {
 			}
 			\modgettext::push_textdomain($mod['rawname']);
 			$this->log($jobid,sprintf(_("Running restore process for %s"),$mod['name']));
+			$this->log($jobid,sprintf(_("Resetting the data for %s, this may take a moment"),$mod['name']));
+			$this->mf->uninstall($mod['rawname'],true);
+			$this->mf->install($mod['rawname'],true);
 			$class = sprintf('\\FreePBX\\modules\\%s\\Restore',ucfirst($mod['rawname']));
 			$class = new $class($restore,$this->FreePBX);
 			$class->runRestore($jobid);

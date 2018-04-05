@@ -1,12 +1,6 @@
 //put all document ready stuff here... One listener to rule them all
 $(document).ready(function(){
-	//warmspare
-
-	if($('input[name="warmspareenables"]:checked').val() == 'yes'){
-		$(".warmspare").slideDown();
-	}	else{
-		$(".warmspare").slideUp();
-	}
+	toggle_warmspare();
 	//init storage multiselect
 	if ($("#backup_storage").length){
 		$('#backup_storage').multiselect({
@@ -46,6 +40,9 @@ $(document).ready(function(){
 			modulesettings[obj.name] = obj.value;
 			$('#backup_items_settings').val(JSON.stringify(modulesettings));
 		});
+	});
+	$('[name="warmspareenables"]').change(function(){
+		toggle_warmspare();
 	});
 });
 //end ready
@@ -99,7 +96,13 @@ $("#backup_backup").on('post-body.bs.table',function(){
 		.done(data => {});
 	});
 });
-
+function toggle_warmspare(){
+	if($('input[name="warmspareenables"]:checked').val() == 'yes'){
+		$(".warmspare").slideDown();
+	}	else{
+		$(".warmspare").slideUp();
+	}
+}
 function lockButtons(id,transaction){
 	$(".run").each(function(){
 		$(this).addClass('disabled');
@@ -168,5 +171,5 @@ function moduleSettingFormatter(i,r,e){
 
 $(document).on('click','.clicmd',function(e){
 	e.preventDefault();
-	window.prompt(_('Run the following in the CLI'),`fwcosole bu --backup ${$(this).data('item')}`);
+	window.prompt(_('Run the following in the CLI'),`fwconsole bu --backup ${$(this).data('item')}`);
 });
