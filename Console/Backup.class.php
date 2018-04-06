@@ -1,5 +1,6 @@
 <?php
 namespace FreePBX\Console\Command;
+use FreePBX\modules\Backup\Handlers as Handler;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -34,6 +35,8 @@ class Backup extends Command {
 		$this->output = $output;
 		$this->input = $input;
 		$this->freepbx = \FreePBX::Create();
+		$backupHandler = new Handler\Backup($this->freepbx);
+		$restoreHandler = new Handler\Restore($this->freepbx);
 		$list = $input->getOption('list');
 		$backup = $input->getOption('backup');
 		$restore = $input->getOption('restore');
@@ -41,7 +44,7 @@ class Backup extends Command {
 		$dumpextern = $input->getOption('dumpextern');
 		$transaction = $input->getOption('transaction');
 		if($input->getOption('implemented')){
-			$output->writeln(json_encode($this->freepbx->Backup->getBackupModules()));
+			$output->writeln(json_encode($backupHandler->getModules()));
 			return;
 		}
 		$job = $transaction?$transaction:$this->freepbx->Backup->generateID();
@@ -59,7 +62,7 @@ class Backup extends Command {
     			return false;
 				}
 				$pid = posix_getpid();
-				$this->freepbx->Backup->doBackup($buid,$job,null,$pid);
+				$backupHandler->process($buid,$job,null,$pid);
 				$lockHandler->release();
 			break;
 			case $restore:
@@ -70,7 +73,7 @@ class Backup extends Command {
 					$this->log($job, _("A restore task is already running"));
     				return false;
 				}
-				$this->freepbx->Backup->doRestore($restore,$job);
+				$restoreHandler->process($restore,$job);
 				$lockHandler->release();
 			break;
 			case $dumpextern:

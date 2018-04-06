@@ -20,6 +20,66 @@
 	<changelog>
 		*15.0.1* Initial release of refactor
 	</changelog>
+	<database>
+		<table name="backup">
+			<field name="id" type="integer" primaryKey="true" autoincrement="true"/>
+			<field name="name" type="string" length="50" notnull="false"/>
+			<field name="description" type="string" length="255" notnull="false"/>
+			<field name="immortal" type="string" length="25" notnull="false"/>
+			<field name="data" type="text" notnull="false"/>
+			<field name="email" type="text" notnull="false"/>
+			<field name="migrated" type="text" notnull="false"/>
+		</table>
+		<table name="backup_details">
+			<field name="backup_id" type="integer"/>
+			<field name="key" type="string" length="50" notnull="false"/>
+			<field name="index" type="string" length="25" notnull="false"/>
+			<field name="value" type="string" length="250" notnull="false"/>
+		</table>
+		<table name="backup_items">
+			<field name="backup_id" type="integer"/>
+			<field name="type" type="string" length="50" notnull="false"/>
+			<field name="path" type="text" notnull="false"/>
+			<field name="exclude" type="text" notnull="false"/>
+		</table>
+		<table name="backup_cache">
+    		<field name="id" type="string" length="50"/>
+    		<field name="manifest" type="text" notnull="false"/>
+    		<key name="id" type="unique">
+      			<column name="id"/>
+    		</key>
+  		</table>
+		<table name="backup_servers">
+			<field name="id" type="integer" primaryKey="true" autoincrement="true"/>
+    		<field name="name" type="string" length="50" notnull="false"/>
+    		<field name="desc" type="string" length="255" notnull="false"/>
+    		<field name="type" type="string" length="50" notnull="false"/>
+    		<field name="readonly" type="string" length="250" notnull="false"/>
+    		<field name="immortal" type="string" length="25" notnull="false"/>
+    		<field name="data" type="text" notnull="false"/>
+    		<field name="migrated" type="text" notnull="false"/>
+		</table>
+  		<table name="backup_server_details">
+    		<field name="server_id" type="integer"/>
+    		<field name="key" type="string" length="50" notnull="false"/>
+    		<field name="value" type="string" length="250" notnull="false"/>
+  		</table>
+		<table name="backup_templates">
+    		<field name="id" type="integer" primaryKey="true" autoincrement="true"/>
+    		<field name="name" type="string" length="50" notnull="false"/>
+    		<field name="desc" type="string" length="255" notnull="false"/>
+    		<field name="immortal" type="string" length="25" notnull="false"/>
+    		<field name="data" type="text" notnull="false"/>
+    		<field name="migrated" type="text" notnull="false"/>
+  		</table>
+		<table name="backup_template_details">
+    		<field name="template_id" type="integer"/>
+    		<field name="type" type="string" length="50" notnull="false"/>
+    		<field name="path" type="text" notnull="false"/>
+    		<field name="exclude" type="text" notnull="false"/>
+  		</table>
+		
+	</database>
 	<supported>
 		<version>15.0</version>
 	</supported>

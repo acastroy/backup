@@ -3,6 +3,7 @@
  * Copyright Sangoma Technologies, Inc 2015
  */
 namespace FreePBX\modules;
+use FreePBX\modules\Backup\Modules as Module;
 use FreePBX\modules\Backup\Handlers as Handler;
 use FreePBX\modules\Filestore\Modules as Filestore;
 use Symfony\Component\Process\Process;
@@ -25,18 +26,11 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		$this->templateFields = [];
 		$this->serverName = $this->FreePBX->Config->get('FREEPBX_SYSTEM_IDENT');
 		$this->sessionlog = [];
+		$this->backupHandler = null;
+		$this->restoreHandler = null;
 	}
 	//BMO STUFF
 	public function install(){
-		//Filestore
-		$this->migrateStorage();
-		//DB Manager
-
-		//Migrate Backup data
-		$this->migrateBackupJobs();
-		//If anyone is listening they can attempt a data migration.
-		$this->FreePBX->Hooks->processHooks($this);
-		$this->setConfig('warmspare', true);
 	}
 
 	public function uninstall(){
@@ -132,7 +126,7 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	}
 
 	/**
-	 * Ajax Handler for BMO
+	 * Ajax Module for BMO
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
@@ -187,9 +181,9 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				}
 				$job = $_GET['transaction'];
 				$buid = $_GET['id'];
-				$lockHandler = new LockHandler($job.'.'.$buid);
-				if (!$lockHandler->lock()) {
-					$lockHandler->release();
+				$lockModule = new LockModule($job.'.'.$buid);
+				if (!$lockModule->lock()) {
+					$lockModule->release();
 					return ['status' => 'running'];
 				}
 				return ['status' => 'stopped'];
@@ -240,7 +234,7 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 					break;
 					case 'backupItems':
 					$id = isset($_GET['id'])?$_GET['id']:'';
-					return $this->getBackupModulesById($id);
+					return $this->HandlerById($id);
 					break;
 					default:
 						return false;
@@ -493,53 +487,8 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		return $return;
 	}
 
-	/**
-	 * Get a list of modules that implement the backup method
-	 * @return array list of modules
-	 */
-	public function getBackupModules($force = false){
-		//Cache
-		if(isset($this->backupMods) && !empty($this->backupMods) && !$force) {
-			return $this->backupMods;
-		}
-		//All modules impliment the "backup" method so it is a horrible way to know
-		//which modules are valid. With the autploader we can do this magic :)
-		$webrootpath = $this->FreePBX->Config->get('AMPWEBROOT');
-		$webrootpath = (isset($webrootpath) && !empty($webrootpath))?$webrootpath:'/var/www/html';
-		$amodules = $this->FreePBX->Modules->getActiveModules();
-		$validmods = [];
-		foreach ($amodules as $module) {
-			$bufile = $webrootpath . '/admin/modules/' . $module['rawname'].'/Backup.php';
-			if(file_exists($bufile)){
-				$validmods[] = ucfirst($module['rawname']);
-			}
-		}
-		return $validmods;
-	}
 
-	/**
-	 * Get a list of modules that implement the restore method
-	 * @return array list of modules
-	 */
-	public function getRestoreModules($force = false){
-		//Cache
-		if(isset($this->restoreMods) && !empty($this->restoreMods) && !$force) {
-			return $this->restoreMods;
-		}
-		//All modules impliment the "backup" method so it is a horrible way to know
-		//which modules are valid. With the autploader we can do this magic :)
-		$webrootpath = $this->FreePBX->Config->get('AMPWEBROOT');
-		$webrootpath = (isset($webrootpath) && !empty($webrootpath))?$webrootpath:'/var/www/html';
-		$amodules = $this->FreePBX->Modules->getActiveModules();
-		$validmods = [];
-		foreach ($amodules as $module) {
-			$bufile = $webrootpath . '/admin/modules/' . $module['rawname'].'/Restore.php';
-			if(file_exists($bufile)){
-				$validmods[] = $module;
-			}
-		}
-		return $validmods;
-	}
+	
 
 	/**
 	 * Get modules for a specific backup id returned in an array
@@ -548,8 +497,11 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	 * @param  boolean $includeSettings Include settings html for rendering in the UI
 	 * @return array   list of module data
 	 */
-	public function getBackupModulesById($id = '',$selectedOnly = false, $includeSettings = true){
-		$modules = $this->getBackupModules();
+	public function HandlerById($id = '',$selectedOnly = false, $includeSettings = true){
+		if(empty($this->backupHandler)){
+			$this->backupHandler = new Handler\Backup($this->FreePBX);
+		}
+		$modules = $this->backupHandler->getModules();
 		$selected = $this->getAll('modules_'.$id);
 		$selected = is_array($selected)?array_keys($selected):[];
 		if($selectedOnly){
@@ -677,230 +629,7 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		}
 		return $this->getAll('modules_'.$id);
 	}
-
-	//Workers
-
-	/**
-	 * Run the backup for the given id
-	 * @param  string $id            Backup id
-	 * @param  string $transactionId UUIDv4 string, if empty one will be generated
-	 * @return mixed               true or array of errors
-	 */
-	public function doBackup($id = '',$transactionId = '', $base64Backup = null, $pid = '') {
-		if(empty($id) && empty($base64Backup)){
-			throw new \Exception("Backup id not provided", 500);
-		}
-		$pid = !empty($pid)?$pid:posix_getpid();
-		$external = !empty($base64Backup);
-		$transactionId = !empty($transactionId)?$transactionId:$this->generateId();
-		$this->setConfig($transactionId,$pid,'running');
-		$this->log($transactionId,_("Running pre backup hooks"));
-		$this->preBackupHooks($id, $transactionId);
-		$base64Backup = !empty($base64Backup)?json_decode(base64_decode($base64Backup),true):false;
-		$backupInfo = $external?$base64Backup:$this->getBackup($id);
-		$underscoreName = str_replace(' ', '_', $backupInfo['backup_name']);
-		$this->log($transactionId,sprintf(_("Starting backup %s"),$underscoreName));
-		$spooldir = $this->FreePBX->Config->get("ASTSPOOLDIR");
-		$serverName = str_replace(' ', '_',$this->FreePBX->Config->get('FREEPBX_SYSTEM_IDENT'));
-		$localPath = sprintf('%s/backup/%s',$spooldir,$underscoreName);
-		$remotePath =  sprintf('/%s/%s',$serverName,$underscoreName);
-		$tmpdir = sprintf('%s/backup/%s','/var/spool/asterisk/tmp',$underscoreName);
-		$this->fs->mkdir($tmpdir);
-		//Use Legacy backup naming
-		$pharname = sprintf('%s/%s%s-%s-%s.tar',$localPath,date("Ymd-His-"),time(),get_framework_version(),rand());
-		$phargzname = sprintf('%s.gz',$pharname);
-		$this->log($transactionId,sprintf(_("This backup will be stored locally at %s and is subject to maintinance settings"),$phargzname));
-		$phar = new \PharData($pharname);
-		$phar->setSignatureAlgorithm(\Phar::SHA256);
-		$storage_ids = $this->getStorageById($id);
-		$data = [];
-		$dirs = [];
-		$files = [];
-		$cleanup = [];
-		$manifest = [
-			'modules' => [],
-			'skipped' => [],
-			'date' => time(),
-			'backupInfo' => $backupInfo,
-		];
-		$validmods = $this->getBackupModules();
-		$backupItems = $this->getAll('modules_'.$id);
-		if($external){
-			$backupItems = $backupInfo['backup_items'];
-		}
-		$selectedmods = is_array($backupItems)?array_keys($backupItems):[];
-		$errors = [];
-		$warnings = [];
-		if(!$external){
-			$maint = new Handler\Maintinance($this->FreePBX,$id);
-		}
-		foreach($selectedmods as $mod) {
-			if(!in_array($mod, $validmods)){
-				$err = sprintf(_("Could not backup module %s, it may not be installed or enabled"),$mod);
-				$warnings[] = $err;
-				$this->log($transactionId,$err);
-				continue;
-			}
-			$backup = new Handler\Backup($this->FreePBX);
-			$backup->setBackupId($id);
-			\modgettext::push_textdomain(strtolower($mod));
-
-			//$this->FreePBX->$mod->backup($backup);
-			$class = sprintf('\\FreePBX\\modules\\%s\\Backup',$mod);
-			$class = new $class($backup,$this->FreePBX);
-			$class->runBackup($id,$transactionId);
-			\modgettext::pop_textdomain();
-			//Skip empty.
-			if($backup->getModified() === false){
-				$this->log($transactionId,sprintf(_("%s returned no data. This module may not impliment the new backup yet. Skipping"), $mod));
-				$this->manifest['skipped'][] = $mod;
-				continue;
-			}
-			$manifest['modules'][] = $mod;
-			$moddata = $backup->getData();
-
-			foreach ($moddata['dirs'] as $dir) {
-				$dirs[] = backup__('files/' . $dir['path']);
-			}
-
-			foreach ($moddata['files'] as $file) {
-				$srcpath = isset($file['pathto'])?$file['pathto']:'';
-				if (empty($srcpath)) {
-					continue;
-				}
-				dbug($file);
-				$srcfile = $srcpath .'/'. $file['filename'];
-
-				$destpath = backup__('files/' . ltrim($file['pathto'],'/'));
-				$destfile = $destpath . $file['filename'];
-
-				$dirs[] = $destpath;
-				$files[$srcfile] = $destfile;
-			}
-
-			$modjson = $tmpdir . '/modulejson/' . $mod . '.json';
-			if (!$this->fs->exists(dirname($modjson))) {
-				$this->fs->mkdir(dirname($modjson));
-			}
-			file_put_contents($modjson, json_encode($moddata, JSON_PRETTY_PRINT));
-			$files[$modjson] = 'modulejson/' . $mod . '.json';
-
-			$data[$mod] = $moddata;
-			$cleanup[$mod] = $moddata['garbage'];
-		}
-
-		foreach ($dirs as $dir) {
-			$phar->addEmptyDir($dir);
-		}
-		$phar->setMetadata($manifest);
-
-		/* We already have a list of files, so we'll let Phar add the files in bulk. */
-		$phar->buildFromIterator(new \ArrayIterator(array_flip($files)));
-
-		$phar->compress(\Phar::GZ);
-		$signatures = $phar->getSignature();
-		//Done with Phar, unlock the file so we can do stuff..
-		unset($phar);
-		//OK SUPER DUMB!! PHP BUG:#58852 On compress filename is truncated to first dot. ಠ_ಠ
-		$firstdot = strpos($pharname,'.');
-		$truncated = substr($pharname,0,$firstdot);
-		$this->fs->rename($truncated.'.tar.gz', $phargzname);
-		$pathinfo = pathinfo($phargzname);
-		if(!$external){
-			$remote = $remotePath.'/'.$pathinfo['basename'];
-			$this->log($transactionId,_("Saving to selected Filestore locations"));
-			$hash = false;
-			if(isset($signatures['hash'])){
-				$hash = $signatures['hash'];
-			}
-			foreach ($storage_ids as $location) {
-				try {
-					$location = explode('_', $location);
-					$this->FreePBX->Filestore->put($location[0],$location[1],$phargzname,$remote);
-					if($hash){
-						$this->FreePBX->Filestore->put($location[0],$location[1],$hash,$remote.'.sha256sum');
-					}
-				} catch (\Exception $e) {
-					$err = $e->getMessage();
-					$this->log($transactionId,$err);
-					$errors[] = $err;
-				}
-			}
-		}
-		$this->log($transactionId,_("Cleaning up"));
-		foreach ($cleanup as $key => $value) {
-			$this->log($transactionId,sprintf(_("Cleaning up data generated by %s"),$key));
-			$this->fs->remove($value);
-		}
-
-		if($external && empty($errors)){
-			$this->fs->rename($phargzname,getcwd().'/'.$transactionId.'.tar.gz');
-			$this->log($transactionId,sprintf(_("Remote transaction complete, file saved to %s"),getcwd().'/'.$transactionId.'tar.gz'));
-		}
-		$this->fs->remove($tmpdir);
-		$this->fs->remove($pharname);
-
-		if(!$external){
-			$this->log($transactionId,_("Performing Local Maintnance"));
-			$maint->processLocal();
-			$this->log($transactionId,_("Performing Remote Maintnance"));
-			$maint->processRemote();
-		}
-		$this->log($transactionId,_("Running post backup hooks"));
-		$this->postBackupHooks($id, $signatures, $errors, $transactionId);
-		if(!empty($errors)){
-			$this->log($transactionId,_("Backup finished with but with errors"));
-			$this->processNotifications($id, $transactionId, $errors);
-			$this->setConfig('errors',$errors,$transactionId);
-			$this->setConfig('warnings',$errors,$transactionId);
-			$this->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
-			return $errors;
-		}
-		$this->log($transactionId,_("Backup completed successfully"));
-		$this->processNotifications($id, $transactionId, []);
-		$this->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
-		$this->delConfig($transactionId,'running');
-		return $signatures;
-	}
-
-	public function doRestore($backupFile, $jobid) {
-		$tmpdir = '/var/spool/asterisk/tmp';
-		$this->fs->Remove($tmpdir);
-		$phar = new \PharData($backupFile);
-		$phar->extractTo($tmpdir);
-		$errors = [];
-		$warnings = [];
-		$mods = $this->getRestoreModules();
-		$this->log($jobid,_("Running pre restore hooks"));
-		$this->preRestoreHooks($jobid);
-		foreach($mods as $mod) {
-			$modjson = $tmpdir . '/modulejson/' . ucfirst($mod['rawname']) . '.json';
-			if(!file_exists($modjson)){
-				$errors[] = sprintf(_("Could not find a manifest for %s, skipping"),$mod['name']);
-				continue;
-			}
-			$moddata = json_decode(file_get_contents($modjson), true);
-			$restore = new Handler\Restore($this->FreePBX, $moddata);
-			$depsOk = $this->processDependencies($restore->getDependencies());
-			if(!$depsOk){
-				$errors[] = printf(_("Dependencies not resolved for %s Skipped"),$mod['name']);
-				continue;
-			}
-			\modgettext::push_textdomain($mod['rawname']);
-			$this->log($jobid,sprintf(_("Running restore process for %s"),$mod['name']));
-			$this->log($jobid,sprintf(_("Resetting the data for %s, this may take a moment"),$mod['name']));
-			$this->mf->uninstall($mod['rawname'],true);
-			$this->mf->install($mod['rawname'],true);
-			$class = sprintf('\\FreePBX\\modules\\%s\\Restore',ucfirst($mod['rawname']));
-			$class = new $class($restore,$this->FreePBX);
-			$class->runRestore($jobid);
-			\modgettext::pop_textdomain();
-		}
-		$this->log($jobid,_("Running post restore hooks"));
-		$this->postRestoreHooks($jobid);
-		$this->fs->remove($tmpdir);
-		return $errors;
-	}
+	
 
 	//UTILITY
 	
@@ -928,41 +657,6 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	public function generateId(){
 		return \Ramsey\Uuid\Uuid::uuid4()->toString();
 	}
-
-	// TODO rename function
-	// TODO Use Hooks->processHooks?
-	public function backupSettingsMagic() {
-		$settings = '';
-		$mods = $this->FreePBX->Modules->getModulesByMethod("backupSettings");
-		$mods = $this->getBackupModules();
-		foreach($mods as $mod) {
-			\modgettext::push_textdomain(strtolower($mod));
-			$settings .= $this->FreePBX->$mod->backupSettings();
-			\modgettext::pop_textdomain();
-		}
-		return $settings;
-	}
-
-	public function processBackupSettings($id,$settings){
-		 $this->FreePBX->Hooks->processHooks($id,$settings);
-	}
-	public function getBackupSettings($id){
-		 return $this->FreePBX->Hooks->processHooks($id);
-	}
-	//TODO: Handle local hooks
-	public function preBackupHooks($id = '', $transactionId = ''){
-		$this->FreePBX->Hooks->processHooks($id,$transactionId);
-	}
-	public function postBackupHooks($id = '', $transactionId=''){
-		$this->FreePBX->Hooks->processHooks($id,$transactionId);
-	}
-	public function preRestoreHooks($transactionId = ''){
-		$this->FreePBX->Hooks->processHooks($transactionId);
-	}
-	public function postRestoreHooks($transactionId=''){
-		$this->FreePBX->Hooks->processHooks($transactionId);
-	}
-
 
 	//TODO: Make this do spmething... Maybe kvstore then longpoll in the UI (that it the dream)
 	public function log($transactionId = '', $message = ''){
@@ -1019,28 +713,5 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		$email->setTo($backupInfo['backup_email']);
 		$email->setBody(implode(PHP_EOL, $emailbody));
 		return $email->send();
-	}
-	public function parseBackupFile($filename){
-		//20171012-130011-1507838411-15.0.1alpha1-42886857.tar.gz
-		preg_match("/(\d{7})-(\d{6})-(\d{10,11})-(.*)-\d*\.tar\.gz(.sha256sum)?/", $filename, $output_array);
-		$valid = false;
-		$arraySize = sizeof($output_array);
-		if($arraySize == 5){
-			$valid = true;
-		}
-		if($arraySize == 6){
-			$valid = true;
-		}
-		if(!$valid){
-			return false;
-		}
-		return [
-			'filename' => $output_array[0],
-			'datestring' => $output_array[1],
-			'timestring' => $output_array[2],
-			'timestamp' => $output_array[3],
-			'framework' => $output_array[4],
-			'isCheckSum' => ($arraySize == 6)
-		];
 	}
 }

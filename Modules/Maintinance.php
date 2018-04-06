@@ -2,8 +2,11 @@
 /**
  * Copyright Sangoma Technologies, Inc 2017
  */
-namespace FreePBX\modules\Backup\Handlers;
+namespace FreePBX\modules\Backup\Modules;
+
 use Carbon\Carbon;
+use FreePBX\modules\Backup\Handlers as Handler;
+
 class Maintinance{
 	public function __construct($freepbx = null, $backupId) {
 		if ($freepbx == null) {
@@ -26,7 +29,7 @@ class Maintinance{
 		$files = new \GlobIterator($this->localPath.'/*.tar.gz*');
 		$maintfiles = [];
 		foreach ($files as $file) {
-			$parsed = $this->FreePBX->Backup->parseBackupFile($file->getBasename());
+			$parsed = Handler\Backup::parseFile($file->getBasename());
 			if($parsed === false){
 				continue;
 			}
@@ -75,7 +78,7 @@ class Maintinance{
 				if(!isset($file['path'])){
 					continue;
 				}
-				$parsed = $this->FreePBX->Backup->parseBackupFile($file['basename']);
+				$parsed = Handler\Backup::parseFile($file['basename']);
 				if($parsed === false){
 					continue;
 				}
