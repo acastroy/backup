@@ -11,10 +11,11 @@ use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
 use Symfony\Component\Filesystem\LockHandler;
-
-
+use Monolog\Handler\SwiftMailerHandler;
+use Monolog\Handler\BufferHandler;
 class Backup extends \FreePBX_Helpers implements \BMO {
 	public function __construct($freepbx = null) {
+		include __DIR__.'/vendor/autoload.php';
 		if ($freepbx == null) {
 				throw new Exception('Not given a FreePBX Object');
 		}
@@ -28,6 +29,14 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		$this->sessionlog = [];
 		$this->backupHandler = null;
 		$this->restoreHandler = null;
+		$this->logger = $this->FreePBX->Logger();
+		$this->logger->createCustomLog('Backup', $path = '/var/log/asterisk/backup.log',true);
+		$transport = \Swift_MailTransport::newInstance();
+		$this->swiftmsg = \Swift_Message::newInstance();
+		$this->swiftmsg->setContentType("text/html");
+		$swift = \Swift_Mailer::newInstance($transport);
+		$this->handler = new BufferHandler(new SwiftMailerHandler($swift,$this->swiftmsg,\Monolog\Logger::INFO),0,\Monolog\Logger::INFO); 
+		$this->logger->customLog->pushHandler($this->handler);
 	}
 	//BMO STUFF
 	public function install(){
@@ -111,12 +120,16 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		switch ($req) {
 			case 'getJSON':
 			case 'run':
-			case 'runstatus':
 			case 'getlog':
 			case 'restoreFiles':
 			case 'uploadrestore':
 			case 'generateRSA':
 				$return = true;
+			break;
+			case 'runstatus':
+				$return = true;
+				$setting['authenticate'] = false;
+				$setting['allowremote'] = true;
 			break;
 			default:
 				$return = false;
@@ -175,18 +188,6 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				}
 				$pid = $process->getPid();
 				return ['status' => true, 'message' => _("Backup running"), 'process' => $pid, 'transaction' => $jobid, 'backupid' => $buid];
-			case 'runstatus':
-				if(!isset($_GET['id']) || !isset($_GET['transaction'])){
-					return ['status' => 'stopped', 'error' => _("Missing id or transaction")];
-				}
-				$job = $_GET['transaction'];
-				$buid = $_GET['id'];
-				$lockModule = new LockModule($job.'.'.$buid);
-				if (!$lockModule->lock()) {
-					$lockModule->release();
-					return ['status' => 'running'];
-				}
-				return ['status' => 'stopped'];
 			case 'getLog':
 				if(!isset($_GET['transaction'])){
 					return[];
@@ -197,10 +198,6 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				switch ($_REQUEST['jdata']) {
 					case 'backupGrid':
 						return array_values($this->listBackups());
-					break;
-					case 'templateGrid':
-						return [];
-						//return array_values($this->listTemplates());
 					break;
 					case 'backupStorage':
 						$storage_ids = [];
@@ -245,7 +242,13 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				return false;
 			break;
 		}
+	}	
+	public function ajaxCustomHandler() {
+		if($_REQUEST['command'] == 'runstatus'){
+			include __DIR__.'/views/run.php';
+		}
 	}
+
 	//TODO: This whole thing
 	public function getRightNav($request) {
 		//We don't need an rnav if the view is not set
@@ -263,9 +266,14 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	}
 
 	//Display stuff
+
 	public function showPage($page){
 		switch ($page) {
 			case 'backup':
+				if(isset($_GET['view']) && $_GET['view'] == 'run'){
+					return load_view(__DIR__.'/views/backup/run.php',array('id' => $_REQUEST['id']));
+				}
+
 				if(isset($_GET['view']) && $_GET['view'] == 'newRSA'){
 					return load_view(__DIR__.'/views/backup/rsa.php');
 				}
@@ -658,12 +666,11 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		return \Ramsey\Uuid\Uuid::uuid4()->toString();
 	}
 
-	//TODO: Make this do spmething... Maybe kvstore then longpoll in the UI (that it the dream)
 	public function log($transactionId = '', $message = ''){
-		$this->FreePBX->Hooks->processHooks($transactionId,$message);
-		$entry = sprintf('%s [%s] - %s', date('c'), $transactionId, $message);
+		$entry = sprintf('[%s] - %s', $transactionId, $message);
 		echo $entry.PHP_EOL;
 		$this->sessionlog[$transactionId][] = $entry;
+		$this->logger->logWrite('backup',$entry,true);
 	}
 
 	public function processNotifications($id, $transactionId, $errors){
@@ -679,39 +686,53 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		if(!empty($errors)){
 			$emailSubject = sprintf(_('Backup %s failed for %s'),$backupInfo['backup_name'], $serverName);
 		}
-		$emailbody = [];
-		if(isset($backupInfo['backup_emailtype']) && $backupInfo['backup_emailtype'] == 'failure'){
-			if(empty($errors)){
-				return false;
-			}
-		}
+
 		if(isset($backupInfo['backup_emailtype']) && $backupInfo['backup_emailtype'] == 'success'){
 			if(!empty($errors)){
 				return false;
 			}
 		}
-		$emailbody[] = _("Backup Information");
-		$emailbody[] = sprintf(_("Backup Name: %s"),$backupInfo['backup_name']);
-		$emailbody[] = sprintf(_("Backup Description: %s"),$backupInfo['backup_description']);
-		$emailbody[] = sprintf(_("Server Name: %s"),$serverName);
-		$emailbody[] = PHP_EOL;
-		if(isset($this->sessionlog[$transactionId])){
-			$emailbody[] = _("Backup Log");
-			foreach ($this->sessionlog[$transactionId] as $line) {
-				$emailbody[] = $line;
+		
+		$this->swiftmsg->setFrom('backup@chode.win');
+		$this->swiftmsg->setSubject($emailSubject);
+		$this->swiftmsg->setTo($backupInfo['backup_email']);
+		$this->swiftmsg->attach(\Swift_Attachment::fromPath('/var/log/asterisk/backup.log')->setFilename('backup.log'));
+		sleep(1);
+		$this->handler->close();
+	}
+	public function getHooks($type = 'all'){
+		if($type == 'backup' || $type == 'all'){
+			$this->preBackup = new \SplQueue();
+			$this->postBackup = new \SplQueue();
+		}
+		if($type == 'restore' || $type == 'all'){
+			$this->preRestore = new \SplQueue();
+			$this->postRestore = new \SplQueue();
+		}
+		foreach (new \DirectoryIterator('/home/asterisk/Backup') as $fileInfo) {
+    		if($fileInfo->isFile() && $fileInfo->isReadable() && $fileInfo->isExecutable()){
+				$fileobj = $fileInfo->openFile('r');
+				while (!$fileobj->eof()) {
+					$found = preg_match("/(pre|post):(backup|restore)/", $fileobj->fgets(), $out);
+       				if($found === 1){
+						$hooktype = $out[1].$out[2];
+						$filename = $fileobj->getFilename();
+						if($hooktype == prebackup && is_object($this->preBackup)){
+							$this->preBackup->push($filename);
+						}
+						if($hooktype == postbackup && is_object($this->postBackup)){
+							$this->postBackup->push($filename);
+						}
+						if($hooktype == prerestore && is_object($this->preRestore)){
+							$this->preRestore->push($filename);
+						}
+						if($hooktype == postrestore && is_object($this->postRestore)){
+							$this->postRestore->push($filename);
+						}
+						break;
+					}
+				}
 			}
 		}
-		if(!empty($errors)){
-			$emailbody[] = _("Error Log");
-			foreach ($errors as $line) {
-				$emailbody[] = $line;
-			}
-		}
-
-		$email = \FreePBX::Mail();
-		$email->setSubject($emailSubject);
-		$email->setTo($backupInfo['backup_email']);
-		$email->setBody(implode(PHP_EOL, $emailbody));
-		return $email->send();
 	}
 }

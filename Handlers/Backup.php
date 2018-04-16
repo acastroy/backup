@@ -3,6 +3,7 @@
  * Copyright Sangoma Technologies, Inc 2018
  */
 namespace FreePBX\modules\Backup\Handlers;
+use FreePBX\modules\Backup\Handlers as Handlers;
 use FreePBX\modules\Backup\Modules as Module;
 
 class Backup{
@@ -24,6 +25,9 @@ class Backup{
 		if(empty($id) && empty($base64Backup)){
 			throw new \Exception("Backup id not provided", 500);
 		}
+		$this->Backup->delById('monolog');
+		$handler = new Handlers\MonologKVStore($this->Backup);
+		$this->Backup->logger->customLog->pushHandler($handler);
 		$pid = !empty($pid)?$pid:posix_getpid();
 		$external = !empty($base64Backup);
 		$transactionId = !empty($transactionId)?$transactionId:$this->Backup->generateId();
@@ -72,7 +76,7 @@ class Backup{
 			if(!in_array($mod, $validmods)){
 				$err = sprintf(_("Could not backup module %s, it may not be installed or enabled"),$mod);
 				$warnings[] = $err;
-				$this->Backup->log($transactionId,$err);
+				$this->Backup->log($transactionId,$err,'DEBUG');
 				continue;
 			}
 			$backup = new Module\Backup($this->FreePBX);
@@ -155,7 +159,7 @@ class Backup{
 					}
 				} catch (\Exception $e) {
 					$err = $e->getMessage();
-					$this->Backup->log($transactionId,$err);
+					$this->Backup->log($transactionId,$err,'ERROR');
 					$errors[] = $err;
 				}
 			}
@@ -182,11 +186,12 @@ class Backup{
 		$this->Backup->log($transactionId,_("Running post backup hooks"));
 		$this->postHooks($id, $signatures, $errors, $transactionId);
 		if(!empty($errors)){
-			$this->Backup->log($transactionId,_("Backup finished with but with errors"));
+			$this->Backup->log($transactionId,_("Backup finished with but with errors",'WARNING'));
 			$this->Backup->processNotifications($id, $transactionId, $errors);
-			$this->Backup->setConfig('errors',$errors,$transactionId);
-			$this->Backup->setConfig('warnings',$errors,$transactionId);
-			$this->Backup->setConfig('log',$this->Backup->sessionlog[$transactionId],$transactionId);
+			//TODO: Don't think I need this because monolog
+			//$this->Backup->setConfig('errors',$errors,$transactionId);
+			//$this->Backup->setConfig('warnings',$errors,$transactionId);
+			//$this->Backup->setConfig('log',$this->Backup->sessionlog[$transactionId],$transactionId);
 			return $errors;
 		}
 		$this->Backup->log($transactionId,_("Backup completed successfully"));

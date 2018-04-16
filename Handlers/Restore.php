@@ -4,7 +4,7 @@
  */
 namespace FreePBX\modules\Backup\Handlers;
 use FreePBX\modules\Backup\Modules as Module;
-
+use FreePBX\modules\Backup\Handlers as Handlers;
 class Restore{
 	public function __construct($freepbx = null) {
 		if ($freepbx == null) {
@@ -18,6 +18,7 @@ class Restore{
 		define('BACKUPTMPDIR','/var/spool/asterisk/tmp');
 	}
 	public function process($backupFile, $jobid) {
+		$this->Backup->logger->customLog->popHandler();
 		$this->Backup->fs->Remove(BACKUPTMPDIR);
 		$phar = new \PharData($backupFile);
 		$phar->extractTo(BACKUPTMPDIR);
@@ -39,11 +40,11 @@ class Restore{
 				$errors[] = printf(_("Dependencies not resolved for %s Skipped"),$mod['name']);
 				continue;
 			}
+			$modulehandler = new Handlers\FreePBXModule($this->FreePBX);
 			\modgettext::push_textdomain($mod['rawname']);
 			$this->Backup->log($jobid,sprintf(_("Running restore process for %s"),$mod['name']));
 			$this->Backup->log($jobid,sprintf(_("Resetting the data for %s, this may take a moment"),$mod['name']));
-			$this->Backup->mf->uninstall($mod['rawname'],true);
-			$this->Backup->mf->install($mod['rawname'],true);
+			$modulehandler->reset($mod['rawname'],$mod['version']);
 			$class = sprintf('\\FreePBX\\modules\\%s\\Restore',ucfirst($mod['rawname']));
 			$class = new $class($restore,$this->Backup->FreePBX);
 			$class->runRestore($jobid);

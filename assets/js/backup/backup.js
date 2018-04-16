@@ -58,42 +58,29 @@ $("#backup_backup").on('post-body.bs.table',function(){
 				$(this).children(":first").removeClass('fa-play').addClass('fa-spinner fa-spin');
 			}
 		});
+		var source = new EventSource(ajaxurl+"?module=backup&command=runstatus");
+		source.addEventListener('message', function (e) {
+			console.log(JSON.parse(e.data));
+		$.each(JSON.parse(e.data),function(){
+			//console.log(this);
+			if (!this.hasOwnProperty('final')){
+				$('#logdiv').append("<li class='list-group-item'>" + this.message.split(" - ")[1] + " </li>");
+
+			}else{
+				source.close();
+				$(".run").each(function () {
+					if ($(this).data('item') == id) {
+						$(this).children(":first").removeClass('fa-play').addClass('fa-spinner fa-spin');
+					}
+				});
+			}
+		});
+		}, false);
+		$('#backuplog').modal('show');
 		$.ajax({
 			url: ajaxurl,
 			data: {module:'backup',command: 'run', id:$(this).data('item')},
-		})
-		.then(data => {
-			transaction = data.transaction;
-			if(data.status == true){
-				fpbxToast(data.message,_("Backup Running, Run buttons will be disabled until it is finished"),'success');
-				let statusCheck = setInterval(function(){
-					if(transaction){
-					$.ajax({ url: ajaxurl, data: {module: 'backup', command:'runstatus', id:id, transaction:transaction}})
-					.then(data => {
-						if(data.status == 'stopped'){
-							clearInterval(statusCheck);
-							$(".run").each(function(){
-								if($(this).data('item') == id){
-									$(this).children(":first").removeClass('fa-spinner fa-spin').addClass('fa-play');
-								}
-							});
-							fpbxToast(_('Your backup has finished'));
-						}
-					})
-					.fail(err => {
-						clearInterval(statusCheck);
-						$(".run").each(function(){
-							if($(this).data('item') == id){
-								$(this).children(":first").removeClass('fa-spinner fa-spin').addClass('fa-play');
-							}
-						});
-					});
-				}
-			}, 2000);
-			}
-		})
-		.fail(err => {})
-		.done(data => {});
+		});
 	});
 });
 function toggle_warmspare(){

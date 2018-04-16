@@ -21,6 +21,7 @@ class Backup extends Command {
 				new InputOption('transaction', 't', InputOption::VALUE_REQUIRED, 'Transaction ID for the backup'),
 				new InputOption('list', 'ls', InputOption::VALUE_NONE, 'List backups'),
 				new InputOption('implemented', '', InputOption::VALUE_NONE, ''),
+				new InputOption('websocket', '', InputOption::VALUE_NONE, ''),
 				new InputOption('restore', 're', InputOption::VALUE_REQUIRED, 'Restore File'),
 		))
 		->setHelp('Run a backup: fwconsole backup --id=[backup-id]'.PHP_EOL
@@ -43,6 +44,9 @@ class Backup extends Command {
 		$remote = $input->getOption('externbackup');
 		$dumpextern = $input->getOption('dumpextern');
 		$transaction = $input->getOption('transaction');
+		if($input->getOption('websocket')){
+			return 	$this->freepbx->Backup->startWS();
+		}
 		if($input->getOption('implemented')){
 			$output->writeln(json_encode($backupHandler->getModules()));
 			return;
@@ -64,6 +68,7 @@ class Backup extends Command {
 				$pid = posix_getpid();
 				$backupHandler->process($buid,$job,null,$pid);
 				$lockHandler->release();
+
 			break;
 			case $restore:
 				$output->writeln(sprintf('Starting restore job with file: %s',$restore));
@@ -79,7 +84,7 @@ class Backup extends Command {
 			case $dumpextern:
 				$backupdata = $this->freepbx->Backup->getBackup($input->getOption('dumpextern'));
 				if(!$backupdata){
-					$output->writeln("Could not find the backuo specified please check the id.");
+					$output->writeln("Could not find the backup specified please check the id.");
 					return false;
 				}
 				$backupdata['backup_items'] = $this->freepbx->Backup->getAll('modules_'.$input->getOption('dumpextern'));
