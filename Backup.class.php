@@ -816,6 +816,24 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		}
 		$hookpath = getenv('BACKUPHOOKDIR');
 		$hookpath = $hookpath?$hookpath:'/home/asterisk/Backup';
+
+		;
+		$filehooks = ['BACKUPPREHOOKS' => 'preBackup','RESTOREPREHOOKS' => 'preRestore','BACKUPPOSTHOOKS' => 'postBackup','RESTOREPOSTHOOKS' => 'postRestore'];
+		$filehookarray = [];
+		foreach($filehooks as $hook => $objName){
+			$env = getenv($hook);
+			if(empty($env)){
+				continue;
+			}
+			$env = explode(',',$env);
+			$env = !empty($env)?$env:[];
+			foreach($env as $file){
+				if(!empty($this->$objName)){
+					$this->$objName->push($file);
+				}	
+			}
+		}
+
 		foreach (new \DirectoryIterator($hookpath) as $fileInfo) {
     		if($fileInfo->isFile() && $fileInfo->isReadable() && $fileInfo->isExecutable()){
 				$fileobj = $fileInfo->openFile('r');
