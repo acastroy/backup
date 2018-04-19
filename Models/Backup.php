@@ -2,7 +2,7 @@
 /**
  * Copyright Sangoma Technologies, Inc 2018
  */
-namespace FreePBX\modules\Backup\Modules;
+namespace FreePBX\modules\Backup\Models;
 
 class Backup{
 	private $data = [

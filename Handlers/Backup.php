@@ -5,6 +5,7 @@
 namespace FreePBX\modules\Backup\Handlers;
 use FreePBX\modules\Backup\Handlers as Handlers;
 use FreePBX\modules\Backup\Modules as Module;
+use FreePBX\modules\Backup\Models as Models;
 
 class Backup{
 	public function __construct($freepbx = null) {
@@ -80,7 +81,7 @@ class Backup{
 				$this->Backup->log($transactionId,$err,'DEBUG');
 				continue;
 			}
-			$backup = new Module\Backup($this->FreePBX);
+			$backup = new Models\Backup($this->FreePBX);
 			$backup->setBackupId($id);
 			\modgettext::push_textdomain(strtolower($mod));
 

@@ -4,6 +4,7 @@
  */
 namespace FreePBX\modules\Backup\Handlers;
 use FreePBX\modules\Backup\Modules as Module;
+use FreePBX\modules\Backup\Models as Models;
 use FreePBX\modules\Backup\Handlers as Handlers;
 class Restore{
 	public function __construct($freepbx = null) {
@@ -40,7 +41,7 @@ class Restore{
 				continue;
 			}
 			$moddata = json_decode(file_get_contents($modjson), true);
-			$restore = new Module\Restore($this->Backup->FreePBX, $moddata);
+			$restore = new Models\Restore($this->Backup->FreePBX, $moddata);
 			$depsOk = $this->Backup->processDependencies($restore->getDependencies());
 			if(!$depsOk){
 				$errors[] = printf(_("Dependencies not resolved for %s Skipped"),$mod['name']);
