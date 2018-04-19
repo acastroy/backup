@@ -19,14 +19,20 @@ class Restore{
 	}
 	public function process($backupFile, $jobid) {
 		$this->Backup->logger->customLog->popHandler();
+		$this->Backup->attachLoggers('restore');
 		$this->Backup->fs->Remove(BACKUPTMPDIR);
 		$phar = new \PharData($backupFile);
+		$restoreData = $phar->getMetadata();
+		$this->restoreModules = [];
+		foreach($restoreData['modules'] as $restoreModule){
+			$this->restoreModules[$restoreModule['module']] = $restoreModule['version'];
+		}
 		$phar->extractTo(BACKUPTMPDIR);
 		$errors = [];
 		$warnings = [];
 		$mods = $this->getModules();
 		$this->Backup->log($jobid,_("Running pre restore hooks"));
-		$this->preHooks($jobid);
+		$this->preHooks($jobid,$restoreData);
 		foreach($mods as $mod) {
 			$modjson = BACKUPTMPDIR . '/modulejson/' . ucfirst($mod['rawname']) . '.json';
 			if(!file_exists($modjson)){
@@ -44,17 +50,20 @@ class Restore{
 			\modgettext::push_textdomain($mod['rawname']);
 			$this->Backup->log($jobid,sprintf(_("Running restore process for %s"),$mod['name']));
 			$this->Backup->log($jobid,sprintf(_("Resetting the data for %s, this may take a moment"),$mod['name']));
-			$modulehandler->reset($mod['rawname'],$mod['version']);
+			$backedupVer = isset($this->restoreModules[$mod['name']])?$this->restoreModules[$mod['name']]:$mod['version'];
+			$modulehandler->reset($mod['rawname'],$backedupVer);
+			$this->Backup->log($jobid,sprintf(_("Restoring the data for %s, this may take a moment"),$mod['name']));
 			$class = sprintf('\\FreePBX\\modules\\%s\\Restore',ucfirst($mod['rawname']));
-			$class = new $class($restore,$this->Backup->FreePBX);
+			$class = new $class($restore,$this->FreePBX,BACKUPTMPDIR);
 			$class->runRestore($jobid);
 			\modgettext::pop_textdomain();
 		}
 		$this->Backup->log($jobid,_("Running post restore hooks"));
-		$this->postHooks($jobid);
+		$this->postHooks($jobid,$restoreData);
 		$this->Backup->fs->remove(BACKUPTMPDIR);
 		return $errors;
 	}
+
 	/**
 	 * Get a list of modules that implement the restore method
 	 * @return array list of modules
@@ -76,11 +85,37 @@ class Restore{
 		}
 		return $validmods;
 	}
-	public function preHooks($transactionId = ''){
-		$this->FreePBX->Hooks->processHooks($transactionId);
+	public function preHooks($transactionId = '',$restoreData = []){
+		$err = [];
+		$restoreData = base64_encode(json_encode($restorData,\JSON_PRETTY_PRINT));
+		$args = escapeshellarg($transactionId).' '.$restoreData;
+		$this->FreePBX->Hooks->processHooks($transactionId,$restoreData);
+		$this->Backup->getHooks('restore');
+		foreach($this->Backup->preRestore as $command){
+			$cmd  = escapeshellcmd($command).' '.$args;
+			exec($cmd,$out,$ret);
+			if($ret !== 0){
+				$errors[] = sprintf(_("%s finished with a non-zero status"),$cmd);
+			}
+		}
+		unset($this->Backup->preRestore);
+		return !empty($errors)?$errors:true;
 	}
-	public function postHooks($transactionId=''){
+	public function postHooks($transactionId='',$restoreData=[]){
+		$err = [];
+		$restoreData = base64_encode(json_encode($restorData,\JSON_PRETTY_PRINT));
+		$args = escapeshellarg($transactionId).' '.$restoreData;
 		$this->FreePBX->Hooks->processHooks($transactionId);
+		$this->Backup->getHooks('restore');
+		foreach($this->Backup->postRestore as $command){
+			$cmd  = escapeshellcmd($command).' '.$args;
+			exec($cmd,$out,$ret);
+			if($ret !== 0){
+				$errors[] = sprintf(_("%s finished with a non-zero status"),$cmd);
+			}
+		}
+		unset($this->Backup->postRestore);
+		return !empty($errors)?$errors:true;
 	}
 
 }

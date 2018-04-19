@@ -28,6 +28,7 @@ class Backup{
 		$this->Backup->delById('monolog');
 		$handler = new Handlers\MonologKVStore($this->Backup);
 		$this->Backup->logger->customLog->pushHandler($handler);
+		$this->Backup->attachLoggers('backup');
 		$pid = !empty($pid)?$pid:posix_getpid();
 		$external = !empty($base64Backup);
 		$transactionId = !empty($transactionId)?$transactionId:$this->Backup->generateId();
@@ -93,26 +94,26 @@ class Backup{
 				$this->Backup->manifest['skipped'][] = $mod;
 				continue;
 			}
-			$manifest['modules'][] = $mod;
+			$rawname = strtolower($mod);
+			$moduleinfo = $this->FreePBX->Modules->getInfo($rawname);
+			$manifest['modules'][] = ['module' => $mod, 'version' => $moduleinfo[$rawname]['version']];
 			$moddata = $backup->getData();
-
 			foreach ($moddata['dirs'] as $dir) {
-				$dirs[] = backup__('files/' . $dir['path']);
+				$dirs[] = $this->Backup->getPath('files/' . ltrim($dir['pathto'],'/'));
 			}
-
 			foreach ($moddata['files'] as $file) {
 				$srcpath = isset($file['pathto'])?$file['pathto']:'';
 				if (empty($srcpath)) {
 					continue;
 				}
-				dbug($file);
 				$srcfile = $srcpath .'/'. $file['filename'];
 
-				$destpath = backup__('files/' . ltrim($file['pathto'],'/'));
+				$destpath = $this->Backup->getPath('files/' . ltrim($file['pathto'],'/'));
 				$destfile = $destpath . $file['filename'];
 
 				$dirs[] = $destpath;
 				$files[$srcfile] = $destfile;
+				$phar->addFile($srcfile,$destfile);
 			}
 
 			$modjson = $tmpdir . '/modulejson/' . $mod . '.json';
@@ -120,7 +121,8 @@ class Backup{
 				$this->Backup->fs->mkdir(dirname($modjson));
 			}
 			file_put_contents($modjson, json_encode($moddata, JSON_PRETTY_PRINT));
-			$files[$modjson] = 'modulejson/' . $mod . '.json';
+			$phar->addFile($modjson,'modulejson/'.$mod.'.json');
+			//$files[$modjson] = '/modulejson/'.$mod.'.json';
 
 			$data[$mod] = $moddata;
 			$cleanup[$mod] = $moddata['garbage'];
@@ -130,10 +132,6 @@ class Backup{
 			$phar->addEmptyDir($dir);
 		}
 		$phar->setMetadata($manifest);
-
-		/* We already have a list of files, so we'll let Phar add the files in bulk. */
-		$phar->buildFromIterator(new \ArrayIterator(array_flip($files)));
-
 		$phar->compress(\Phar::GZ);
 		$signatures = $phar->getSignature();
 		//Done with Phar, unlock the file so we can do stuff..
@@ -187,15 +185,12 @@ class Backup{
 		$this->postHooks($id, $signatures, $errors, $transactionId);
 		if(!empty($errors)){
 			$this->Backup->log($transactionId,_("Backup finished with but with errors",'WARNING'));
-			$this->Backup->processNotifications($id, $transactionId, $errors);
+			$this->Backup->processNotifications($id, $transactionId, $errors,true);
 			//TODO: Don't think I need this because monolog
-			//$this->Backup->setConfig('errors',$errors,$transactionId);
-			//$this->Backup->setConfig('warnings',$errors,$transactionId);
-			//$this->Backup->setConfig('log',$this->Backup->sessionlog[$transactionId],$transactionId);
 			return $errors;
 		}
 		$this->Backup->log($transactionId,_("Backup completed successfully"));
-		$this->Backup->processNotifications($id, $transactionId, []);
+		$this->Backup->processNotifications($id, $transactionId, [],true);
 		$this->Backup->setConfig('log',$this->sessionlog[$transactionId],$transactionId);
 		$this->Backup->delConfig($transactionId,'running');
 		return $signatures;
@@ -219,12 +214,35 @@ class Backup{
 	public function getSettings($id){
 		 return $this->FreePBX->Hooks->processHooks($id);
 	}
-	//TODO: Handle local hooks
 	public function preHooks($id = '', $transactionId = ''){
+		$err = [];
+		$args = escapeshellarg($id).' '.escapeshellarg($transactionId);
 		$this->FreePBX->Hooks->processHooks($id,$transactionId);
+		$this->Backup->getHooks('backup');
+		foreach($this->Backup->preBackup as $command){
+			$cmd  = escapeshellcmd($command).' '.$args;
+			exec($cmd,$out,$ret);
+			if($ret !== 0){
+				$errors[] = sprintf(_("%s finished with a non-zero status"),$cmd);
+			}
+		}
+		unset($this->Backup->preBackup);
+		return !empty($errors)?$errors:true;
 	}
-	public function postHooks($id = '', $transactionId=''){
+	public function postHooks($id = '', $signatures = [], $errors = [], $transactionId = ''){
+		$err = [];
+		$args = escapeshellarg($id).' '.escapeshellarg($transactionId).' '.base64_encode(json_encode($signatures,\JSON_PRETTY_PRINT)).' '.base64_encode(json_encode($errors,\JSON_PRETTY_PRINT));
 		$this->FreePBX->Hooks->processHooks($id,$transactionId);
+		$this->Backup->getHooks('backup');
+		foreach($this->Backup->postBackup as $command){
+			$cmd  = escapeshellcmd($command).' '.$args;
+			exec($cmd,$out,$ret);
+			if($ret !== 0){
+				$errors[] = sprintf(_("%s finished with a non-zero status"),$cmd);
+			}
+		}
+		unset($this->Backup->postBackup);
+		return !empty($errors)?$errors:true;
 	}
 	
 	static function parseFile($filename){

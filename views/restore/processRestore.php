@@ -14,55 +14,14 @@
   </div>
   <div class="col-md-7">
     <div class="panel panel-default">
-      <div class="panel-heading"><h3><?php echo _("Restore Settings")?></h3></div>
+      <div class="panel-heading"><h3><?php echo _("Restore Information")?></h3></div>
       <div class="panel-body">
-      <!--Install Missing-->
-      <div class="element-container">
-        <div class="row">
-          <div class="form-group">
-            <div class="col-md-3">
-              <label class="control-label" for="missing"><?php echo _("Install Missing") ?></label>
-              <i class="fa fa-question-circle fpbx-help-icon" data-for="missing"></i>
-            </div>
-            <div class="col-md-9 radioset">
-              <input type="radio" name="missing" id="missingyes" value="yes" <?php echo ($missing == "yes"?"CHECKED":"") ?>>
-              <label for="missingyes"><?php echo _("Yes");?></label>
-              <input type="radio" name="missing" id="missingno" value="no" <?php echo ($missing == "no"?"CHECKED":"") ?>>
-              <label for="missingno"><?php echo _("No");?></label>
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="col-md-12">
-            <span id="missing-help" class="help-block fpbx-help-block"><?php echo _("Should we automatically install modules not currently installed?")?></span>
-          </div>
-        </div>
-      </div>
-      <!--END Install Missing-->
-      <!--Reset Modules-->
-      <div class="element-container">
-        <div class="row">
-          <div class="form-group">
-            <div class="col-md-3">
-              <label class="control-label" for="reset"><?php echo _("Reset Modules") ?></label>
-              <i class="fa fa-question-circle fpbx-help-icon" data-for="reset"></i>
-            </div>
-            <div class="col-md-9 radioset">
-              <input type="radio" name="reset" id="resetyes" value="yes" <?php echo ($reset == "yes"?"CHECKED":"") ?>>
-              <label for="resetyes"><?php echo _("Yes");?></label>
-              <input type="radio" name="reset" id="resetno" value="no" <?php echo ($reset == "no"?"CHECKED":"") ?>>
-              <label for="resetno"><?php echo _("No");?></label>
-            </div>
-          </div>
-        </div>
-        <div class="row">
-          <div class="col-md-12">
-            <span id="reset-help" class="help-block fpbx-help-block"><?php echo _("If set the modules will be asked to remove existing data")?></span>
-          </div>
-        </div>
-      </div>
-      <!--END Reset Modules-->
-
+      <ul class="list-group">
+        <li class = "list-group-item list-group-item-danger"><?php echo _("Running a restore will overwrite current data. This cannot be undone!")?></li>
+        <li class = "list-group-item list-group-item-warning"><?php echo _("This restore will attempt to install and enable the module version in the backup.")?></li>
+        <li class = "list-group-item list-group-item-info"><?php echo _("This restore will only affect the modules listed below")?></li>
+        <li class = "list-group-item list-group-item-info"><?php echo _("After the restore you should reload with the apply config button")?></li>
+      </ul>
     </div>
   </div> <!--End column-->
 </div><!--End Row-->
@@ -79,8 +38,9 @@
   class="table table-striped">
   <thead>
     <tr>
-      <th data-field="modulename" class="col-md-10"><?php echo _("Module")?></th>
-      <th data-field="installed" data-formatter="installedFormatter" class="col-md-2"><?php echo _("Installed")?></th>
+      <th data-field="modulename" class="col-md-4"><?php echo _("Module")?></th>
+      <th data-field="version" class="col-md-4"><?php echo _("Version in Backup")?></th>
+      <th data-field="installed" class="col-md-4"><?php echo _("Status")?></th>
     </tr>
   </thead>
 </table>

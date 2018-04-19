@@ -1,6 +1,6 @@
 <?php
 /**
- * Copyright Sangoma Technologies, Inc 2015
+ * Copyright Sangoma Technologies, Inc 2018
  */
 namespace FreePBX\modules;
 use FreePBX\modules\Backup\Modules as Module;
@@ -37,6 +37,7 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		$swift = \Swift_Mailer::newInstance($transport);
 		$this->handler = new BufferHandler(new SwiftMailerHandler($swift,$this->swiftmsg,\Monolog\Logger::INFO),0,\Monolog\Logger::INFO); 
 		$this->logger->customLog->pushHandler($this->handler);
+		$this->loggingHooks = null;
 	}
 	//BMO STUFF
 	public function install(){
@@ -68,6 +69,23 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	 * @param [type] $request [description]
 	 */
 	public function getActionBar($request) {
+		if(!isset($request['view'])){
+			return [];
+		}
+		if($request['view'] == 'processrestore'){
+			return [
+				'run' => [
+					'name' => 'runrestore',
+					'id' => 'runrestore',
+					'value' => _("Run Restore")
+				],
+				'back' => [
+					'name' => 'goback',
+					'id' => 'goback',
+					'value' => _("Go Back")
+				]
+				];
+		}
 		$buttons = array(
 			'reset' => array(
 				'name' => 'reset',
@@ -120,10 +138,12 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		switch ($req) {
 			case 'getJSON':
 			case 'run':
-			case 'getlog':
+			case 'localdownload':
+			case 'localRestoreFiles':
 			case 'restoreFiles':
 			case 'uploadrestore':
 			case 'generateRSA':
+			case 'deleteLocal':
 				$return = true;
 			break;
 			case 'runstatus':
@@ -143,12 +163,24 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	 */
 	public function ajaxHandler() {
 		switch ($_REQUEST['command']) {
+			case 'deleteLocal':
+				$filepath = $this->pathFromId($_REQUEST['id']);
+				if(!$filepath){
+					return ['status' => false, "message" => _("Invalid ID Provided")];
+				}
+				$file = new \SplFileObject($filepath);
+				if(!$file->isWritable()){
+					return ['status' => false, "message" => _("We don't have permissions to this file")];					
+				}
+				if(unlink($filepath)){
+					return ['status' => true, "message" => "File Removed"];
+				}
+				return ['status' => false, "message" => _("We can't seem to delete the chosen file")];					
 			case 'generateRSA':
 				$ssh = new Filestore\Remote();
 				$ret = $ssh->generateKey('/home/asterisk/.ssh');
 			return ['status' => $ret];
 			case 'uploadrestore':
-			$id = $this->generateId();
 			if(!isset($_FILES['filetorestore'])){
 				return ['status' => false, 'error' => _("No file provided")];
 			}
@@ -166,11 +198,14 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 			if (!move_uploaded_file($_FILES['filetorestore']['tmp_name'],$file)){
 				return ['status' => false, 'message' => _("Failed to copy the uploaded file")];
 			}
-			$this->setConfig('file', $file, $id);
+			$this->setConfig(md5($file), $file, 'localfilepaths');
 			$backupphar = new \PharData($file);
 			$meta = $backupphar->getMetadata();
 			$this->setConfig('meta', $meta, $id);
-			return ['status' => true, 'id' => $id, 'meta' => $meta];
+			return ['status' => true, 'id' => md5($file)];
+			case 'localRestoreFiles':
+				return $this->getLocalFiles();
+			return [];
 			case 'restoreFiles':
 				return [];
 			case 'run':
@@ -188,12 +223,6 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				}
 				$pid = $process->getPid();
 				return ['status' => true, 'message' => _("Backup running"), 'process' => $pid, 'transaction' => $jobid, 'backupid' => $buid];
-			case 'getLog':
-				if(!isset($_GET['transaction'])){
-					return[];
-				}
-				$ret = $this->getAll($_GET['transaction']);
-				return $ret?$ret:[];
 			case 'getJSON':
 				switch ($_REQUEST['jdata']) {
 					case 'backupGrid':
@@ -246,6 +275,20 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	public function ajaxCustomHandler() {
 		if($_REQUEST['command'] == 'runstatus'){
 			include __DIR__.'/views/run.php';
+		}
+		if($_REQUEST['command'] == 'localdownload'){
+			if(empty($_REQUEST['id'])){
+				return false;
+			}
+			$filepath = $this->getAll('localfilepaths');
+			$filepath = isset($filepath[$_REQUEST['id']])?$filepath[$_REQUEST['id']]:false;
+			if(empty($filepath)){
+				return false;
+			}
+			header("Content-disposition: attachment; filename=".basename($filepath));
+			header("Content-type: application/octet-stream");
+			readfile($filepath);
+			exit; 
 		}
 	}
 
@@ -328,20 +371,15 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 						if(!isset($_GET['id']) || empty($_GET['id'])){
 							return load_view(__DIR__.'/views/restore/landing.php',['error' => _("No id was specified to process. Please try submitting your file again.")]);
 						}
-						$backupjson = [];
-						$vars = $this->getAll($_GET['id']);
-						$vars['missing'] = "yes";
-						$vars['reset'] = "no";
-						$vars['enabletrunks'] = "yes";
-						foreach ($vars['meta']['modules'] as $module) {
-							$mod = strtolower($module);
-							$status = $this->FreePBX->Modules->checkStatus($mod);
-							$backupjson[] = [
-								'modulename' => $module,
-								'installed' => $status
-							];
+						$path = $this->pathFromId($_GET['id']);
+						if($path){
+							$manifest = $this->getMetaData($path);
 						}
-						$vars['jsondata'] = json_encode($backupjson);
+						$vars['meta'] = $manifest;
+						$vars['date'] = $this->FreePBX->View->getDateTime($manifest['date']);
+						$vars['jsondata'] = $this->moduleJSONFromManifest($manifest);
+						$vars['id'] = $_GET['id'];
+
 						return load_view(__DIR__.'/views/restore/processRestore.php',$vars);
 					break;
 					default:
@@ -447,7 +485,10 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 	//End migration stuff
 
 	//Getters
-
+	public function pathFromId($id){
+		$filepath = $this->getAll('localfilepaths');
+		return isset($filepath[$id])?$filepath[$id]:false;
+	}
 	/**
 	 * Get storage locations by backup ID
 	 * @param  string $id backup id
@@ -495,8 +536,54 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		return $return;
 	}
 
+	public function getLocalFiles(){
+		$base = $this->FreePBX->Config->get('ASTSPOOLDIR');
+		$base = $base?$base:'/var/spool/asterisk';
+		$Directory = new \RecursiveDirectoryIterator($base.'/backup',\FilesystemIterator::SKIP_DOTS|\FilesystemIterator::CURRENT_AS_FILEINFO);
+		$Iterator = new \RecursiveIteratorIterator($Directory,\RecursiveIteratorIterator::LEAVES_ONLY);
+		$files = [];
+		$this->delById('localfilepaths');
+		foreach($Iterator as $k => $v){
+			$path = $v->getPathInfo()->getRealPath();
+			$buname = $v->getPathInfo()->getBasename();
+			$buname = str_replace('_',' ',$buname);
+			$backupinfo = $this->parseFile(basename($k));
+			if(empty($backupinfo)){
+				continue;
+			}
+			$this->setConfig(md5($k),$k,'localfilepaths');
+			$backupinfo['path'] = $path;
+			$backupinfo['id'] = md5($k);
+			$backupinfo['name'] = $buname;
+			$backupinfo['date'] = $this->FreePBX->View->getDateTime($backupinfo['timestamp']);
+			$files[] = $backupinfo;
+		}
+		return $files;
+	}
 
-	
+	static function parseFile($filename){
+		//20171012-130011-1507838411-15.0.1alpha1-42886857.tar.gz
+		preg_match("/(\d{7})-(\d{6})-(\d{10,11})-(.*)-\d*\.tar\.gz(.sha256sum)?/", $filename, $output_array);
+		$valid = false;
+		$arraySize = sizeof($output_array);
+		if($arraySize == 5){
+			$valid = true;
+		}
+		if($arraySize == 6){
+			$valid = true;
+		}
+		if(!$valid){
+			return false;
+		}
+		return [
+			'filename' => $output_array[0],
+			'datestring' => $output_array[1],
+			'timestring' => $output_array[2],
+			'timestamp' => $output_array[3],
+			'framework' => $output_array[4],
+			'isCheckSum' => ($arraySize == 6)
+		];
+	}
 
 	/**
 	 * Get modules for a specific backup id returned in an array
@@ -700,6 +787,24 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 		sleep(1);
 		$this->handler->close();
 	}
+
+	public function attachLoggers($type){
+		if(!is_object($this->loggingHooks)){
+			$this->loggingHooks = new \SplObjectStorage();
+		}
+		$this->FreePBX->Hooks->processHooks($this->loggingHooks,$type);
+		foreach($this->loggingHooks as $hook){
+			try{ 
+				$this->logger->customLog->pushHandler($hook);
+			}catch(\Exception $e){
+				//don't  let a bad apple mess it up for everyone
+				dbug('Backup: custom handler skipped');
+				dbug($e->getMessage());
+				continue;
+			}
+		}
+	}
+
 	public function getHooks($type = 'all'){
 		if($type == 'backup' || $type == 'all'){
 			$this->preBackup = new \SplQueue();
@@ -709,24 +814,26 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 			$this->preRestore = new \SplQueue();
 			$this->postRestore = new \SplQueue();
 		}
-		foreach (new \DirectoryIterator('/home/asterisk/Backup') as $fileInfo) {
+		$hookpath = getenv('BACKUPHOOKDIR');
+		$hookpath = $hookpath?$hookpath:'/home/asterisk/Backup';
+		foreach (new \DirectoryIterator($hookpath) as $fileInfo) {
     		if($fileInfo->isFile() && $fileInfo->isReadable() && $fileInfo->isExecutable()){
 				$fileobj = $fileInfo->openFile('r');
 				while (!$fileobj->eof()) {
 					$found = preg_match("/(pre|post):(backup|restore)/", $fileobj->fgets(), $out);
        				if($found === 1){
 						$hooktype = $out[1].$out[2];
-						$filename = $fileobj->getFilename();
-						if($hooktype == prebackup && is_object($this->preBackup)){
+						$filename = $hookpath.'/'.$fileobj->getFilename();
+						if($hooktype == 'prebackup' && !empty($this->preBackup)){
 							$this->preBackup->push($filename);
 						}
-						if($hooktype == postbackup && is_object($this->postBackup)){
+						if($hooktype == 'postbackup' && !empty($this->postBackup)){
 							$this->postBackup->push($filename);
 						}
-						if($hooktype == prerestore && is_object($this->preRestore)){
+						if($hooktype == 'prerestore' && !empty($this->preRestore)){
 							$this->preRestore->push($filename);
 						}
-						if($hooktype == postrestore && is_object($this->postRestore)){
+						if($hooktype == 'postrestore' && !empty($this->postRestore)){
 							$this->postRestore->push($filename);
 						}
 						break;
@@ -734,5 +841,39 @@ class Backup extends \FreePBX_Helpers implements \BMO {
 				}
 			}
 		}
+	}
+	public function getMetaData($phar){
+		$p = new \PharData($phar);
+		$meta = $p->getMetadata();
+		$meta['signature'] = $p->getSignature();
+		unset($p);
+		return $meta;
+	}
+	static function getPath($string){
+		if (!preg_match("/__(.+)__/", $string, $out)) {
+			return $string;
+		}
+		$path = \FreePBX::Config()->get($out[1]);
+		if($path){
+			return str_replace($out[0], $path, $string);
+		}
+		return $string;
+	}
+	public function moduleJSONFromManifest($data){
+		$return = [];
+		if(!isset($data['modules'])){
+			return [];
+		}
+		foreach($data['modules'] as $module){
+			$name = $module['module'];
+			$version = $module['version'];
+			$status = ($this->FreePBX->Modules->checkStatus(strtolower($name)))?_("Enabled"):_("Uninstalled or Disabled");
+			$return[] = [
+				'modulename' => $name,
+				'version' => $version,
+				'installed' => $status
+			];
+		}
+		return json_encode($return);
 	}
 }

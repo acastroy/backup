@@ -23,6 +23,7 @@ class Backup extends Command {
 				new InputOption('implemented', '', InputOption::VALUE_NONE, ''),
 				new InputOption('websocket', '', InputOption::VALUE_NONE, ''),
 				new InputOption('restore', 're', InputOption::VALUE_REQUIRED, 'Restore File'),
+				new InputOption('manifest', 'man', InputOption::VALUE_REQUIRED, 'File Manifest'),
 		))
 		->setHelp('Run a backup: fwconsole backup --id=[backup-id]'.PHP_EOL
 		.'Run a restore: fwconsole backup --restore=[/path/to/restore-xxxxxx.tar.gz]'.PHP_EOL
@@ -44,8 +45,9 @@ class Backup extends Command {
 		$remote = $input->getOption('externbackup');
 		$dumpextern = $input->getOption('dumpextern');
 		$transaction = $input->getOption('transaction');
-		if($input->getOption('websocket')){
-			return 	$this->freepbx->Backup->startWS();
+		$manifest = $input->getOption('manifest');
+		if($manifest){
+			return 	$output->writeln(json_encode($this->freepbx->Backup->getMetaData($manifest),\JSON_PRETTY_PRINT));
 		}
 		if($input->getOption('implemented')){
 			$output->writeln(json_encode($backupHandler->getModules()));

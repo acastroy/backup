@@ -62,7 +62,7 @@ class Backup{
 	[
 		type => 'descriptor module dependent',
 		filename => 'file.ext',
-		path => '/path/to/',
+		pathto => '/path/to/',
 		root => 'base __ASTETCDIR__ etc'.
 	]
 	*/

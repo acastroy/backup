@@ -33,6 +33,35 @@ if(isset($error) && !empty($error)){
 
 <div class="panel panel-primary">
 	<div class="panel-heading">
+		<h3 class="panel-title"><?php echo _("Restore from local cache")?></h3>
+	</div>
+	<div class="panel-body">
+		<?php
+			$localdataurl = "ajax.php?module=backup&command=localRestoreFiles";
+		?>
+		<table id="localrestorefiles"
+			data-url="<?php echo $localdataurl?>"
+			data-cache="false"
+			data-maintain-selected="true"
+			data-show-columns="true"
+			data-show-toggle="true"
+			data-toggle="table"
+			data-pagination="true"
+			data-search="true"
+			class="table table-striped">
+			<thead>
+				<tr>
+					<th data-field="name"><?php echo _("Backup Name")?></th>
+					<th data-field="date"><?php echo _("Backup Date")?></th>
+					<th data-field="framework"><?php echo _("Framework")?></th>
+					<th data-field="id" data-formatter="localLinkFormatter"><?php echo _("Actions")?></th>
+				</tr>
+			</thead>
+		</table>
+	</div>
+</div>
+<div class="panel panel-primary">
+	<div class="panel-heading">
 		<h3 class="panel-title"><?php echo _("Restore from the cloud")?></h3>
 	</div>
 	<div class="panel-body">
@@ -43,7 +72,7 @@ if(isset($error) && !empty($error)){
 			$dataurl = "ajax.php?module=backup&command=restoreFiles";
 		?>
 
-		<table id="restorefiles"
+		<table id="restoreFiles"
 			data-url="<?php echo $dataurl?>"
 			data-cache="false"
 			data-maintain-selected="true"

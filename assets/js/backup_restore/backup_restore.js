@@ -30,7 +30,7 @@ $(document).ready(() => {
   });
 	const inputElement = document.querySelector('input[type="file"]');
   const pond = FilePond.create( inputElement );
-  pond.registerPlugin('filepond-plugin-file-validate-type');
+  //pond.registerPlugin('filepond-plugin-file-validate-type');
   pond.setOptions({
     server: ajaxurl+'?module=backup&command=uploadrestore',
     instantUpload: true,
@@ -57,3 +57,37 @@ $(document).ready(() => {
     labelButtonProcessItem: 	_('Upload')
   });
 });//end document ready
+
+function localLinkFormatter(value, row, index) {
+  var html = '<a href="?display=backup_restore&view=processrestore&type=local&id=' + row['id'] + '"><i class="fa fa-play"></i></a>';
+  html += '<a href="/admin/api/backup/localdownload?id='+row['id']+'" class="localdownload" target="_blank"><i class="fa fa-download"></i></a>';
+  html += '&nbsp;<a href="#" id="' + row['id'] + '" class="localDelete"><i class="fa fa-trash"></i></a>';
+  return html;
+}
+$("table").on("post-body.bs.table", function () {
+  $('.localDelete').on('click', e =>{
+    e.preventDefault();
+    fpbxConfirm(_("Are you sure you wish to delete this file? This cannot be undone"),
+      _("Delete"),_("Cancel"),
+      function(){
+        var id = e.currentTarget.id;
+        $.ajax({
+          url: ajaxurl,
+          method: "GET",
+          data: {
+            module: 'backup',
+            command: 'deleteLocal',
+            id: id
+          }
+        })
+        .then(data => {
+          console.log(data);
+          if(data.status){
+            $("#localrestorefiles").bootstrapTable('refresh',{silent:true});
+          }
+          fpbxToast(data.message);
+        });
+      }
+    );
+  });
+});
