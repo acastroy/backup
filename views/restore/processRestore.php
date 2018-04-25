@@ -47,7 +47,9 @@
 <script>
   $(document).ready(() => {
     $('#restoremodules').bootstrapTable({data: <?php echo $jsondata?>});
-  });
+    window.fileid = "<?php echo $fileid?>";
+  });//end ready
+  
   function installedFormatter(v){
     if(v){
       return `<i class="fa fa-check text-success"></i>`;

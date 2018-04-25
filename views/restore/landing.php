@@ -86,8 +86,8 @@ if(isset($error) && !empty($error)){
 				<tr>
 					<th data-field="name"><?php echo _("Backup Name")?></th>
 					<th data-field="date"><?php echo _("Backup Date")?></th>
-					<th data-field="backuptype"><?php echo _("Backup Type")?></th>
-					<th data-field="link" data-formatter="linkFormatter"><?php echo _("Actions")?></th>
+					<th data-field="type"><?php echo _("Backup Type")?></th>
+					<th data-field="id" data-formatter="remoteFormatter"><?php echo _("Actions")?></th>
 				</tr>
 			</thead>
 		</table>

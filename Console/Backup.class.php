@@ -21,7 +21,6 @@ class Backup extends Command {
 				new InputOption('transaction', 't', InputOption::VALUE_REQUIRED, 'Transaction ID for the backup'),
 				new InputOption('list', 'ls', InputOption::VALUE_NONE, 'List backups'),
 				new InputOption('implemented', '', InputOption::VALUE_NONE, ''),
-				new InputOption('websocket', '', InputOption::VALUE_NONE, ''),
 				new InputOption('restore', 're', InputOption::VALUE_REQUIRED, 'Restore File'),
 				new InputOption('manifest', 'man', InputOption::VALUE_REQUIRED, 'File Manifest'),
 		))

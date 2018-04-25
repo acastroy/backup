@@ -38,6 +38,7 @@ class Backup{
 		$this->preHooks($id, $transactionId);
 		$base64Backup = !empty($base64Backup)?json_decode(base64_decode($base64Backup),true):false;
 		$backupInfo = $external?$base64Backup:$this->Backup->getBackup($id);
+		$this->Backup->attachEmail($backupInfo);
 		$underscoreName = str_replace(' ', '_', $backupInfo['backup_name']);
 		$this->Backup->log($transactionId,sprintf(_("Starting backup %s"),$underscoreName));
 		$spooldir = $this->FreePBX->Config->get("ASTSPOOLDIR");
@@ -47,10 +48,14 @@ class Backup{
 		$tmpdir = sprintf('%s/backup/%s','/var/spool/asterisk/tmp',$underscoreName);
 		$this->Backup->fs->mkdir($tmpdir);
 		//Use Legacy backup naming
-		$pharname = sprintf('%s/%s%s-%s-%s.tar',$localPath,date("Ymd-His-"),time(),get_framework_version(),rand());
-		$phargzname = sprintf('%s.gz',$pharname);
+		$pharbase = 
+		$pharfilename = sprintf('%s%s-%s-%s',date("Ymd-His-"),time(),get_framework_version(),rand());
+		$pharnamebase = sprintf('%s/%s',$localPath,$pharfilename);
+		$phargzname = sprintf('%s.tar.gz',$pharnamebase);
+		$pharname= sprintf('%s.tar',$pharnamebase);
 		$this->Backup->log($transactionId,sprintf(_("This backup will be stored locally at %s and is subject to maintinance settings"),$phargzname));
 		$phar = new \PharData($pharname);
+		$phar->addEmptyDir('/modulejson');
 		$phar->setSignatureAlgorithm(\Phar::SHA256);
 		$storage_ids = $this->Backup->getStorageById($id);
 		$data = [];
@@ -123,7 +128,6 @@ class Backup{
 			}
 			file_put_contents($modjson, json_encode($moddata, JSON_PRETTY_PRINT));
 			$phar->addFile($modjson,'modulejson/'.$mod.'.json');
-			//$files[$modjson] = '/modulejson/'.$mod.'.json';
 
 			$data[$mod] = $moddata;
 			$cleanup[$mod] = $moddata['garbage'];
@@ -137,13 +141,10 @@ class Backup{
 		$signatures = $phar->getSignature();
 		//Done with Phar, unlock the file so we can do stuff..
 		unset($phar);
-		//OK SUPER DUMB!! PHP BUG:#58852 On compress filename is truncated to first dot. ಠ_ಠ
-		$firstdot = strpos($pharname,'.');
-		$truncated = substr($pharname,0,$firstdot);
-		$this->Backup->fs->rename($truncated.'.tar.gz', $phargzname);
-		$pathinfo = pathinfo($phargzname);
+		$this->Backup->fs->rename($pharname, $phargzname);
+		@unlink($pharname);
 		if(!$external){
-			$remote = $remotePath.'/'.$pathinfo['basename'];
+			$remote = $remotePath.'/'.$pharnamebase.'.tar.gz';
 			$this->Backup->log($transactionId,_("Saving to selected Filestore locations"));
 			$hash = false;
 			if(isset($signatures['hash'])){
@@ -152,7 +153,7 @@ class Backup{
 			foreach ($storage_ids as $location) {
 				try {
 					$location = explode('_', $location);
-					$this->Backup->FreePBX->Filestore->put($location[0],$location[1],$phargzname,$remote);
+					$this->Backup->FreePBX->Filestore->put($location[0],$location[1],file_get_contents($phargzname),$remote);
 					if($hash){
 						$this->Backup->FreePBX->Filestore->put($location[0],$location[1],$hash,$remote.'.sha256sum');
 					}
@@ -227,6 +228,7 @@ class Backup{
 				$errors[] = sprintf(_("%s finished with a non-zero status"),$cmd);
 			}
 		}
+		sleep(5);
 		unset($this->Backup->preBackup);
 		return !empty($errors)?$errors:true;
 	}
